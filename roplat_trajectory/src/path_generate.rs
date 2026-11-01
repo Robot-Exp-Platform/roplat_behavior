@@ -1,161 +1,104 @@
+//! Point-to-point curves. Every generator is a struct: it is constructed with
+//! the bounds, planned with a start and a target, and sampled by time with
+//! `apply`, which returns the value and whether the move is complete. Where a
+//! function is wanted, the caller writes `|t| curve.apply(t).0`.
 use nalgebra as na;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-type FN<T> = Arc<dyn Fn(Duration) -> T + Send + Sync>;
+#[cfg(test)]
+use std::sync::Arc;
 
-/// Generate a linear path for joint space
-pub fn joint_linear<const N: usize>(
-    start: &[f64; N],
-    end: &[f64; N],
-    v_max: &[f64; N],
-) -> (FN<[f64; N]>, Duration) {
-    let start = na::SVector::<f64, N>::from_row_slice(start);
-    let end = na::SVector::<f64, N>::from_row_slice(end);
-    let v_max = na::SVector::<f64, N>::from_row_slice(v_max);
+/// A synchronized constant-speed move of `N` joints: a [`JointSCurve`] with
+/// unbounded acceleration and jerk, so every joint moves at the speed that
+/// lets all of them arrive together.
+#[derive(Clone, Debug)]
+pub struct JointLinear<const N: usize>(JointSCurve<N>);
 
-    let delta = end - start;
-    let t_max = delta
-        .iter()
-        .zip(v_max.iter())
-        .map(|(d, v)| d.abs() / v)
-        .fold(0.0, f64::max);
+impl<const N: usize> JointLinear<N> {
+    pub fn new(v_max: [f64; N]) -> Self {
+        Self(JointSCurve::new(
+            v_max,
+            [f64::INFINITY; N],
+            [f64::INFINITY; N],
+        ))
+    }
 
-    let f = move |t: Duration| {
-        let t = t.as_secs_f64().min(t_max);
-        let t = t / t_max;
-        if t >= 1. { end } else { start + delta * t }.into()
-    };
+    /// Plans the move from `start` to `target` and returns its duration.
+    pub fn plan(&mut self, start: [f64; N], target: [f64; N]) -> Duration {
+        self.0.plan(start, target)
+    }
 
-    (Arc::new(f), Duration::from_secs_f64(t_max))
+    /// The joint positions at `time` and whether the move is complete.
+    pub fn apply(&self, time: Duration) -> ([f64; N], bool) {
+        self.0.apply(time)
+    }
 }
 
-/// Generate a linear path for cartesian space
-pub fn cartesian_quat_linear(
+/// A synchronized trapezoidal-speed move of `N` joints: a [`JointSCurve`] with
+/// unbounded jerk.
+#[derive(Clone, Debug)]
+pub struct JointTrapezoid<const N: usize>(JointSCurve<N>);
+
+impl<const N: usize> JointTrapezoid<N> {
+    pub fn new(v_max: [f64; N], a_max: [f64; N]) -> Self {
+        Self(JointSCurve::new(v_max, a_max, [f64::INFINITY; N]))
+    }
+
+    /// Plans the move from `start` to `target` and returns its duration.
+    pub fn plan(&mut self, start: [f64; N], target: [f64; N]) -> Duration {
+        self.0.plan(start, target)
+    }
+
+    /// The joint positions at `time` and whether the move is complete.
+    pub fn apply(&self, time: Duration) -> ([f64; N], bool) {
+        self.0.apply(time)
+    }
+}
+
+/// A straight-line move of a pose at a bounded linear speed; the orientation
+/// turns along with it by spherical interpolation.
+#[derive(Clone, Debug)]
+pub struct CartesianLinear {
+    v_max: f64,
     start: na::Isometry3<f64>,
     end: na::Isometry3<f64>,
-    v_max: f64,
-) -> (FN<na::Isometry3<f64>>, Duration) {
-    let start_trans = start.translation.vector;
-    let end_trans = end.translation.vector;
-    let delta = end_trans - start_trans;
-    let t_max = delta.norm() / v_max;
-
-    let f = move |t: Duration| {
-        let t = t.as_secs_f64().min(t_max);
-        let t = t / t_max;
-        if t >= 1. {
-            end
-        } else {
-            start.lerp_slerp(&end, t)
-        }
-    };
-
-    (Arc::new(f), Duration::from_secs_f64(t_max))
+    total: Duration,
+    planned: bool,
 }
 
-pub fn joint_trapezoid<const N: usize>(
-    start: &[f64; N],
-    end: &[f64; N],
-    v_max: &[f64; N],
-    a_max: &[f64; N],
-) -> (FN<[f64; N]>, Duration) {
-    let start = na::SVector::<f64, N>::from_column_slice(start);
-    let end = na::SVector::<f64, N>::from_column_slice(end);
-    let delta = end - start;
-
-    let k1 = delta
-        .iter()
-        .zip(a_max)
-        .map(|(d, a)| d / a)
-        .fold(0.0, f64::max);
-    let k2 = delta
-        .iter()
-        .zip(v_max)
-        .map(|(d, v)| d / v)
-        .fold(0.0, f64::max);
-    let mut t_max = delta
-        .iter()
-        .zip(v_max)
-        .zip(a_max)
-        .map(trapezoid_min_time)
-        .fold(0.0, f64::max);
-
-    let t1_max = 1. - (1. - 4. * k1 / t_max.powi(2)).sqrt();
-    let t2_min = 2. - 2. * k2 / t_max;
-
-    let (t_max, t2) = if t1_max <= t2_min {
-        (t_max, t2_min / 2.)
-    } else {
-        t_max = k2 + k1 / k2;
-        (t_max, 1. - 1. * k2 / t_max)
-    };
-
-    let f = move |t: Duration| {
-        let t = t.as_secs_f64().min(t_max);
-        let t = t / t_max;
-        let b = 1. / 2. / t2 / (1. - t2);
-        if t < 1. - t2 {
-            start + delta * b * if t < t2 { t * t } else { 2. * t - t2.powi(2) }
-        } else {
-            end - delta * b * if t < 1. { (1. - t).powi(2) } else { 0. }
+impl CartesianLinear {
+    pub fn new(v_max: f64) -> Self {
+        Self {
+            v_max,
+            start: na::Isometry3::identity(),
+            end: na::Isometry3::identity(),
+            total: Duration::ZERO,
+            planned: false,
         }
-        .into()
-    };
-
-    (Arc::new(f), Duration::from_secs_f64(t_max))
-}
-
-fn trapezoid_min_time(para: ((&f64, &f64), &f64)) -> f64 {
-    let ((d, v_max), a_max) = para;
-    if *d > v_max.powi(2) / *a_max {
-        d / v_max + v_max / a_max
-    } else {
-        2. * (d / a_max).sqrt()
     }
-}
 
-pub fn t_curve(
-    delta: f64,
-    v_max: f64,
-    a_max: f64,
-) -> (f64, Arc<dyn Fn(Duration) -> f64 + Send + Sync>) {
-    if delta.abs() < 1e-6 {
-        return (0., Arc::new(|_| 0.));
+    /// Plans the move from `start` to `end` and returns its duration.
+    pub fn plan(&mut self, start: na::Isometry3<f64>, end: na::Isometry3<f64>) -> Duration {
+        self.start = start;
+        self.end = end;
+        let distance = (end.translation.vector - start.translation.vector).norm();
+        self.total = Duration::from_secs_f64(distance / self.v_max);
+        self.planned = true;
+        self.total
     }
-    let delta = delta.abs();
-    if !a_max.is_finite() {
-        // Unbounded acceleration: constant speed, or no time at all when the
-        // speed is unbounded too.
-        let t_total = if v_max.is_finite() { delta / v_max } else { 0. };
-        let f = move |t: Duration| {
-            let t = t.as_secs_f64();
-            if t < t_total { v_max * t } else { delta }
-        };
-        return (t_total, Arc::new(f));
-    }
-    // A short move never reaches v_max: accelerating to sqrt(delta * a_max)
-    // and braking again covers exactly delta.
-    let v_max = v_max.min((delta * a_max).sqrt());
-    let t_acc = v_max / a_max;
-    let s_acc = 0.5 * a_max * t_acc * t_acc;
-    let s_cruise = delta - 2. * s_acc;
-    let t_cruise = if s_cruise > 0. { s_cruise / v_max } else { 0. };
-    let t_total = 2. * t_acc + t_cruise;
-    let f = move |t: Duration| {
-        let t = t.as_secs_f64().min(t_total);
-        if t < t_acc {
-            0.5 * a_max * t * t
-        } else if t < t_acc + t_cruise {
-            s_acc + v_max * (t - t_acc)
-        } else {
-            delta - 0.5 * a_max * (t_total - t).powi(2)
+
+    /// The pose at `time` and whether the move is complete.
+    pub fn apply(&self, time: Duration) -> (na::Isometry3<f64>, bool) {
+        if !self.planned || time >= self.total {
+            return (self.end, true);
         }
-    };
-    (t_total, Arc::new(f))
+        let progress = time.as_secs_f64() / self.total.as_secs_f64();
+        (self.start.lerp_slerp(&self.end, progress), false)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
-enum ScalarSCurveProfile {
+pub(crate) enum ScalarSCurveProfile {
     Hold,
     /// Velocity and acceleration unbounded: the move takes no time.
     Instant {
@@ -203,7 +146,7 @@ enum ScalarSCurveProfile {
 }
 
 impl ScalarSCurveProfile {
-    fn plan(delta: f64, v_max: f64, a_max: f64, j_max: f64) -> Self {
+    pub(crate) fn plan(delta: f64, v_max: f64, a_max: f64, j_max: f64) -> Self {
         if delta.abs() < 1e-6 {
             return Self::Hold;
         }
@@ -262,7 +205,7 @@ impl ScalarSCurveProfile {
         }
     }
 
-    fn total_time(self) -> f64 {
+    pub(crate) fn total_time(self) -> f64 {
         match self {
             Self::Hold | Self::Instant { .. } => 0.,
             Self::Constant { t_total, .. } => t_total,
@@ -273,7 +216,7 @@ impl ScalarSCurveProfile {
         }
     }
 
-    fn sample(self, t: f64) -> f64 {
+    pub(crate) fn sample(self, t: f64) -> f64 {
         match self {
             Self::Hold => 0.,
             Self::Instant { delta } => delta,
@@ -460,20 +403,6 @@ impl<const N: usize> JointSCurve<N> {
     }
 }
 
-pub fn joint_s_curve<const N: usize>(
-    start: &[f64; N],
-    end: &[f64; N],
-    v_max: &[f64; N],
-    a_max: &[f64; N],
-    j_max: &[f64; N],
-) -> (Arc<dyn Fn(Duration) -> [f64; N] + Send + Sync>, Duration) {
-    let mut curve = JointSCurve::new(*v_max, *a_max, *j_max);
-    let total = curve.plan(*start, *end);
-    let f = move |t: Duration| curve.apply(t).0;
-
-    (Arc::new(f), total)
-}
-
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 fn s_curve(
     delta: f64,
@@ -482,7 +411,11 @@ fn s_curve(
     j_max: f64,
 ) -> (f64, Arc<dyn Fn(Duration) -> f64 + Send + Sync>) {
     if !j_max.is_finite() {
-        return t_curve(delta, v_max, a_max);
+        let profile = ScalarSCurveProfile::plan(delta, v_max, a_max, f64::INFINITY);
+        return (
+            profile.total_time(),
+            Arc::new(move |t: Duration| profile.sample(t.as_secs_f64())),
+        );
     }
     let d2 = 2. * a_max.powi(3) / j_max.powi(2);
     let d1 = v_max * (a_max / j_max + v_max / a_max);
@@ -571,97 +504,176 @@ fn s_curve(
     }
 }
 
-pub fn joint_simple_4th_curve<const N: usize>(
-    start: &[f64; N],
-    end: &[f64; N],
-    v_max: &[f64; N],
-    a_max: &[f64; N],
-) -> (FN<[f64; N]>, Duration) {
-    let start = na::SVector::<f64, N>::from_column_slice(start);
-    let end = na::SVector::<f64, N>::from_column_slice(end);
-    let delta = end - start;
-
-    let mut t_path = Vec::with_capacity(N);
-    let mut f_path = Vec::with_capacity(N);
-    for i in 0..N {
-        let (t, f) = if v_max[i].is_finite() || a_max[i].is_finite() {
-            simple_4th_curve(delta[i].abs(), v_max[i], a_max[i])
-        } else {
-            // Velocity and acceleration unbounded: this joint takes no time.
-            let d = delta[i].abs();
-            (
-                0.,
-                Arc::new(move |_: Duration| d) as Arc<dyn Fn(Duration) -> f64 + Send + Sync>,
-            )
-        };
-        t_path.push(t);
-        f_path.push(f);
-    }
-
-    let t_max = t_path.iter().cloned().fold(0.0, f64::max);
-
-    let f = move |t: Duration| {
-        let t = t.as_secs_f64();
-        let t = if t_max > 0.0 { t / t_max } else { 0.0 };
-        let mut result = start;
-        for i in 0..N {
-            result[i] += delta[i].signum() * f_path[i](Duration::from_secs_f64(t * t_path[i]));
-        }
-        result.into()
-    };
-
-    (Arc::new(f), Duration::from_secs_f64(t_max))
+/// A synchronized fourth-order move of `N` joints. Each joint follows a smooth
+/// polynomial speed profile within its own speed and acceleration bounds; the
+/// profiles are stretched in time so that all joints arrive together.
+#[derive(Clone, Debug)]
+pub struct JointFourthOrder<const N: usize> {
+    v_max: [f64; N],
+    a_max: [f64; N],
+    start: [f64; N],
+    target: [f64; N],
+    profiles: [ScalarFourthOrderProfile; N],
+    times: [f64; N],
+    total: Duration,
+    planned: bool,
 }
 
-pub fn cartesian_quat_simple_4th_curve(
+impl<const N: usize> JointFourthOrder<N> {
+    pub fn new(v_max: [f64; N], a_max: [f64; N]) -> Self {
+        Self {
+            v_max,
+            a_max,
+            start: [0.; N],
+            target: [0.; N],
+            profiles: [ScalarFourthOrderProfile::Hold; N],
+            times: [0.; N],
+            total: Duration::ZERO,
+            planned: false,
+        }
+    }
+
+    /// Plans the move from `start` to `target` and returns its duration.
+    pub fn plan(&mut self, start: [f64; N], target: [f64; N]) -> Duration {
+        self.start = start;
+        self.target = target;
+        let mut longest = 0.0_f64;
+        for i in 0..N {
+            let distance = (target[i] - start[i]).abs();
+            let profile = ScalarFourthOrderProfile::plan(distance, self.v_max[i], self.a_max[i]);
+            self.times[i] = profile.total_time();
+            self.profiles[i] = profile;
+            longest = longest.max(self.times[i]);
+        }
+        self.total = Duration::from_secs_f64(longest);
+        self.planned = true;
+        self.total
+    }
+
+    /// The joint positions at `time` and whether the move is complete.
+    pub fn apply(&self, time: Duration) -> ([f64; N], bool) {
+        if !self.planned || self.total.is_zero() || time >= self.total {
+            return (self.target, true);
+        }
+        let progress = time.as_secs_f64() / self.total.as_secs_f64();
+        let mut result = self.start;
+        for i in 0..N {
+            let travelled = self.profiles[i].sample(progress * self.times[i]);
+            result[i] += (self.target[i] - self.start[i]).signum() * travelled;
+        }
+        (result, false)
+    }
+}
+
+/// A straight-line move of a pose with a fourth-order speed profile along the
+/// line, within a linear speed and acceleration bound; the orientation turns
+/// along with it by spherical interpolation.
+#[derive(Clone, Debug)]
+pub struct CartesianFourthOrder {
+    v_max: f64,
+    a_max: f64,
     start: na::Isometry3<f64>,
     end: na::Isometry3<f64>,
-    v_max: f64,
-    a_max: f64,
-) -> (FN<na::Isometry3<f64>>, Duration) {
-    let delta = (end.translation.vector - start.translation.vector).norm();
-    let (t_min, f) = simple_4th_curve(1., v_max / delta, a_max / delta);
-    let f = move |t: Duration| {
-        let t = if t_min > 0.0 { f(t) } else { 0.0 };
-        if t >= 1. {
-            end
-        } else {
-            start.lerp_slerp(&end, t)
-        }
-    };
-    (Arc::new(f), Duration::from_secs_f64(t_min))
+    profile: ScalarFourthOrderProfile,
+    total: Duration,
+    planned: bool,
 }
 
-fn simple_4th_curve(
-    delta: f64,
-    v_max: f64,
-    a_max: f64,
-) -> (f64, Arc<dyn Fn(Duration) -> f64 + Send + Sync>) {
-    if delta < 1e-6 {
-        return (0., Arc::new(|_| 0.));
-    }
-    let mut v_max = v_max;
-    if delta < 1.5 * v_max.powi(2) / a_max {
-        v_max = (2. / 3. * delta * a_max).sqrt();
-    }
-
-    let t1 = 1.5 * v_max / a_max;
-    let t_min = t1 + delta / v_max;
-
-    let f = move |t: Duration| {
-        let t = t.as_secs_f64();
-        if t < t1 {
-            (t / t1).powi(3) * (t1 - 0.5 * t) * v_max
-        } else if t < t_min - t1 {
-            t1 * v_max / 2. + (t - t1) * v_max
-        } else if t < t_min {
-            delta - ((t_min - t) / t1).powi(3) * (t1 - 0.5 * (t_min - t)) * v_max
-        } else {
-            delta
+impl CartesianFourthOrder {
+    pub fn new(v_max: f64, a_max: f64) -> Self {
+        Self {
+            v_max,
+            a_max,
+            start: na::Isometry3::identity(),
+            end: na::Isometry3::identity(),
+            profile: ScalarFourthOrderProfile::Hold,
+            total: Duration::ZERO,
+            planned: false,
         }
-    };
+    }
 
-    (t_min, Arc::new(f))
+    /// Plans the move from `start` to `end` and returns its duration.
+    pub fn plan(&mut self, start: na::Isometry3<f64>, end: na::Isometry3<f64>) -> Duration {
+        self.start = start;
+        self.end = end;
+        let distance = (end.translation.vector - start.translation.vector).norm();
+        // The profile runs over the unit path parameter; the bounds scale with
+        // the distance. A zero distance makes them unbounded: an instant move.
+        self.profile =
+            ScalarFourthOrderProfile::plan(1.0, self.v_max / distance, self.a_max / distance);
+        self.total = Duration::from_secs_f64(self.profile.total_time());
+        self.planned = true;
+        self.total
+    }
+
+    /// The pose at `time` and whether the move is complete.
+    pub fn apply(&self, time: Duration) -> (na::Isometry3<f64>, bool) {
+        if !self.planned || self.total.is_zero() || time >= self.total {
+            return (self.end, true);
+        }
+        let progress = self.profile.sample(time.as_secs_f64());
+        (self.start.lerp_slerp(&self.end, progress), false)
+    }
+}
+
+/// A scalar fourth-order profile over a nonnegative distance: a cubic ramp up
+/// to `v_max`, a cruise, and the mirrored ramp down.
+#[derive(Clone, Copy, Debug)]
+enum ScalarFourthOrderProfile {
+    /// No distance to cover.
+    Hold,
+    /// Speed and acceleration unbounded: the move takes no time.
+    Instant { delta: f64 },
+    Curve {
+        delta: f64,
+        v_max: f64,
+        t1: f64,
+        t_min: f64,
+    },
+}
+
+impl ScalarFourthOrderProfile {
+    fn plan(delta: f64, v_max: f64, a_max: f64) -> Self {
+        if delta < 1e-6 {
+            return Self::Hold;
+        }
+        if !v_max.is_finite() && !a_max.is_finite() {
+            return Self::Instant { delta };
+        }
+        // A short move never reaches v_max: the peak speed that still fits the
+        // ramps into the distance.
+        let mut v_max = v_max;
+        if delta < 1.5 * v_max.powi(2) / a_max {
+            v_max = (2. / 3. * delta * a_max).sqrt();
+        }
+        let t1 = 1.5 * v_max / a_max;
+        Self::Curve { delta, v_max, t1, t_min: t1 + delta / v_max }
+    }
+
+    fn total_time(self) -> f64 {
+        match self {
+            Self::Hold | Self::Instant { .. } => 0.,
+            Self::Curve { t_min, .. } => t_min,
+        }
+    }
+
+    fn sample(self, t: f64) -> f64 {
+        match self {
+            Self::Hold => 0.,
+            Self::Instant { delta } => delta,
+            Self::Curve { delta, v_max, t1, t_min } => {
+                if t < t1 {
+                    (t / t1).powi(3) * (t1 - 0.5 * t) * v_max
+                } else if t < t_min - t1 {
+                    t1 * v_max / 2. + (t - t1) * v_max
+                } else if t < t_min {
+                    delta - ((t_min - t) / t1).powi(3) * (t1 - 0.5 * (t_min - t)) * v_max
+                } else {
+                    delta
+                }
+            }
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -698,19 +710,20 @@ mod test {
         let mut instant = JointSCurve::new([f64::INFINITY], [f64::INFINITY], [f64::INFINITY]);
         assert_eq!(instant.plan([0.0], [0.5]), Duration::ZERO);
         assert_eq!(instant.apply(Duration::ZERO), ([0.5], true));
-        let (total, f) = t_curve(0.5, 2.0, f64::INFINITY);
-        assert_eq!((total, f(Duration::from_secs(1))), (0.25, 0.5));
+        let profile = ScalarSCurveProfile::plan(0.5, 2.0, f64::INFINITY, f64::INFINITY);
+        assert_eq!((profile.total_time(), profile.sample(1.0)), (0.25, 0.5));
     }
 
     /// A move too short to reach v_max peaks at sqrt(delta * a_max) and stays
     /// continuous where acceleration turns into braking.
     #[test]
     fn a_short_trapezoid_is_continuous() {
-        let (total, f) = t_curve(1.0, 3.5, 7.0);
+        let profile = ScalarSCurveProfile::plan(1.0, 3.5, 7.0, f64::INFINITY);
+        let total = profile.total_time();
         assert!((total - 2.0 * (1.0f64 / 7.0).sqrt()).abs() < 1e-12);
         let mid = Duration::from_secs_f64(total / 2.0);
         // Within the nanosecond resolution of `Duration`.
-        assert!((f(mid) - 0.5).abs() < 1e-6);
+        assert!((profile.sample(mid.as_secs_f64()) - 0.5).abs() < 1e-6);
         let mut curve = JointSCurve::new([3.5], [7.0], [f64::INFINITY]);
         let total = curve.plan([0.0], [1.0]);
         let mut previous = 0.0;
@@ -726,10 +739,11 @@ mod test {
         let start = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         let end = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let v_max = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
-        let (f, _) = joint_linear(&start, &end, &v_max);
+        let mut curve = JointLinear::new(v_max);
+        curve.plan(start, end);
 
         let t = Duration::from_secs_f64(0.5);
-        let result = f(t);
+        let (result, _) = curve.apply(t);
         assert_eq!(result, [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
     }
 
@@ -740,12 +754,12 @@ mod test {
             na::Translation3::new(1.0, 1.0, 1.0),
             na::UnitQuaternion::from_euler_angles(0.1, 0.2, 0.3),
         );
-        let v_max = 1.0;
-        let (f, _) = cartesian_quat_linear(start, end, v_max);
+        let mut curve = CartesianLinear::new(1.0);
+        curve.plan(start, end);
 
         for i in 0..210 {
             let t = Duration::from_secs_f64(i as f64 / 100.);
-            let result = f(t);
+            let (result, _) = curve.apply(t);
             println!("time: {} | {:?}", i as f64 / 100., result);
         }
     }
@@ -756,11 +770,12 @@ mod test {
         let end = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let v_max = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let a_max = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
-        let (f, _) = joint_trapezoid(&start, &end, &v_max, &a_max);
+        let mut curve = JointTrapezoid::new(v_max, a_max);
+        curve.plan(start, end);
 
         for i in 0..210 {
             let t = Duration::from_secs_f64(i as f64 / 100.);
-            let result = f(t);
+            let (result, _) = curve.apply(t);
             println!("time: {} | {:?}", i as f64 / 100., result);
         }
     }
@@ -820,7 +835,9 @@ mod test {
         let v_max = [2.1750, 2.1750, 2.1750, 2.1750, 2.6100, 2.6100, 2.6100];
         let a_max = [15., 7.5, 10., 12.5, 15., 20., 20.];
         let j_max = [100., 100., 100., 100., 100., 100., 100.];
-        let (f, _) = joint_s_curve(&start, &end, &v_max, &a_max, &j_max);
+        let mut curve = JointSCurve::new(v_max, a_max, j_max);
+        curve.plan(start, end);
+        let f = |t: Duration| curve.apply(t).0;
         let f_dot = |t: Duration| {
             let dt: Duration = Duration::from_secs_f64(0.001);
             let t_dot = t + dt;
@@ -967,7 +984,9 @@ mod test {
         let end = [0., -PI / 4., 0., -3. * PI / 4., 0., PI / 2., PI / 4.];
         let v_max = [2.1750, 2.1750, 2.1750, 2.1750, 2.6100, 2.6100, 2.6100];
         let a_max = [15., 7.5, 10., 12.5, 15., 20., 20.];
-        let (f, _) = joint_simple_4th_curve(&start, &end, &v_max, &a_max);
+        let mut curve = JointFourthOrder::new(v_max, a_max);
+        curve.plan(start, end);
+        let f = |t: Duration| curve.apply(t).0;
         let f_dot = |t: Duration| {
             let dt: Duration = Duration::from_secs_f64(0.001);
             let t_dot = t + dt;

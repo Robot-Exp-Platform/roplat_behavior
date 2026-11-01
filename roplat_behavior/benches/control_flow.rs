@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-struct Channel;
+struct Channel<const W: usize>;
 struct BenchRobot<const W: usize> {
     count: usize,
     checksum: f64,
@@ -30,7 +30,7 @@ impl<const W: usize> Robot for BenchRobot<W> {
         Ok(())
     }
 }
-impl<const W: usize> ControlSpace<BenchRobot<W>> for Channel {
+impl<const W: usize> ControlSpace for Channel<W> {
     type Obs = usize;
     type Command = [f64; W];
 }
@@ -62,7 +62,7 @@ impl<const W: usize> BenchRobot<W> {
         self.legacy(move |obs, duration| futures::executor::block_on(callback(obs, duration)))
     }
 }
-impl<const W: usize> ControlWith<Channel> for BenchRobot<W> {
+impl<const W: usize> ControlWith<Channel<W>> for BenchRobot<W> {
     fn hold_command(_: &usize) -> [f64; W] {
         [0.0; W]
     }
@@ -72,7 +72,7 @@ impl<const W: usize> ControlWith<Channel> for BenchRobot<W> {
     {
         loop {
             match callback(black_box(self.count), Duration::from_millis(1)) {
-                ControlFlow::Break(()) => break,
+                ControlFlow::Break(_) => break,
                 ControlFlow::Continue((command, done)) => {
                     self.checksum += black_box(command)[0];
                     self.count += 1;
@@ -91,7 +91,7 @@ fn command<const W: usize>(tick: usize, cycles: usize) -> ([f64; W], bool) {
 fn sync_path<const W: usize>(flow: bool, cycles: usize) {
     let mut robot = BenchRobot::<W>::new();
     if flow {
-        <BenchRobot<W> as ControlWith<Channel>>::control_with(&mut robot, |t, _| {
+        <BenchRobot<W> as ControlWith<Channel<W>>>::control_with(&mut robot, |t, _| {
             command(t, cycles)
         })
         .unwrap();
@@ -103,7 +103,7 @@ fn sync_path<const W: usize>(flow: bool, cycles: usize) {
 fn async_path<const W: usize>(flow: bool, cycles: usize) {
     let mut robot = BenchRobot::<W>::new();
     if flow {
-        <BenchRobot<W> as ControlWith<Channel>>::control_with_async(&mut robot, async |t, _| {
+        <BenchRobot<W> as ControlWith<Channel<W>>>::control_with_async(&mut robot, async |t, _| {
             command(t, cycles)
         })
         .unwrap();
@@ -144,7 +144,7 @@ where
 fn rhythm_path<const W: usize>(flow: bool, cycles: usize, runtime: &tokio::runtime::Runtime) {
     if flow {
         let mut robot = BenchRobot::<W>::new();
-        let (out, n) = runtime.block_on(ControlRhythm::<BenchRobot<W>, Channel>::new().drive(
+        let (out, n) = runtime.block_on(ControlRhythm::<BenchRobot<W>, Channel<W>>::new().drive(
             0_u64,
             |n, (t, _), _| async move {
                 (

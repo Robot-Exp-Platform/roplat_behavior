@@ -1,4 +1,4 @@
-﻿use crate::RobotResult;
+use crate::RobotResult;
 
 use super::{
     Robot,

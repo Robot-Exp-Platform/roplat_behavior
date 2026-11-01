@@ -32,14 +32,16 @@ impl Robot for TwoJointArm {
 }
 
 impl Joints<2> for TwoJointArm {
-    const JOINT_MIN: [f64; 2] = [-2.0; 2];
-    const JOINT_MAX: [f64; 2] = [2.0; 2];
-    const JOINT_VEL_BOUND: [f64; 2] = [3.0; 2];
-    const JOINT_ACC_BOUND: [f64; 2] = [10.0; 2];
+    const JOINT_LIMITS: JointLimits<2> = JointLimits {
+        dq_max: [3.0; 2],
+        ddq_max: [10.0; 2],
+        ..JointLimits::positions([-2.0; 2], [2.0; 2])
+    };
 }
 
 impl EndPoint for TwoJointArm {
-    const CARTESIAN_VEL_BOUND: f64 = 1.0;
+    const CARTESIAN_LIMITS: CartesianLimits =
+        CartesianLimits { linear_velocity_max: 1.0, ..CartesianLimits::UNBOUNDED };
 }
 
 impl EndPointPose for TwoJointArm {
@@ -88,7 +90,7 @@ impl Arm<2> for TwoJointArm {
 
 #[test]
 fn undeclared_bounds_read_as_unbounded() {
-    let joint = TwoJointArm::joint_limits();
+    let joint = TwoJointArm::JOINT_LIMITS;
     assert_eq!(
         (joint.q_min, joint.q_max, joint.dq_max),
         ([-2.0; 2], [2.0; 2], [3.0; 2])
@@ -97,9 +99,9 @@ fn undeclared_bounds_read_as_unbounded() {
     assert_eq!(joint.tau_max, [f64::INFINITY; 2]);
     assert_eq!(joint.dtau_max, [f64::INFINITY; 2]);
 
-    let cartesian = TwoJointArm::cartesian_limits();
-    assert_eq!(cartesian.linear_velocity, 1.0);
-    assert_eq!(cartesian.angular_jerk, f64::INFINITY);
+    let cartesian = TwoJointArm::CARTESIAN_LIMITS;
+    assert_eq!(cartesian.linear_velocity_max, 1.0);
+    assert_eq!(cartesian.angular_jerk_max, f64::INFINITY);
 }
 
 #[test]
@@ -111,7 +113,7 @@ fn scaling_keeps_unbounded_bounds_unbounded() {
     assert_eq!(joint.dddq_max, [f64::INFINITY; 2]);
     // Position and effort bounds are not scaled.
     assert_eq!(joint.q_max, [2.0; 2]);
-    assert_eq!(limits.scaled_cartesian().linear_velocity, 0.5);
+    assert_eq!(limits.scaled_cartesian().linear_velocity_max, 0.5);
 }
 
 #[test]
@@ -132,7 +134,7 @@ fn limits_may_only_tighten_the_envelope() {
     assert!(tighter(|l| l.joint.q_min = [2.0; 2]).is_err());
     assert!(tighter(|l| l.joint.ddq_max[1] = f64::NAN).is_err());
     assert!(tighter(|l| l.joint.tau_max = [0.0; 2]).is_err());
-    assert!(tighter(|l| l.cartesian.linear_velocity = 2.0).is_err());
+    assert!(tighter(|l| l.cartesian.linear_velocity_max = 2.0).is_err());
     assert!(tighter(|l| l.scale = 0.0).is_err());
     assert!(tighter(|l| l.scale = 1.5).is_err());
 }

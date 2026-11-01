@@ -1,9 +1,7 @@
 #![cfg(feature = "roplat")]
 //! Resource ownership and business errors are independent in an actual System.
 use roplat::{Node, RoplatResult};
-use roplat_behavior::{
-    MotionSpace, MoveTo, Robot, RobotException, RobotResult, roplat::MotionNode,
-};
+use roplat_behavior::{MoveTo, Robot, RobotException, RobotResult, Space, roplat::MotionNode};
 
 #[derive(Default)]
 struct Arm {
@@ -20,8 +18,8 @@ impl Robot for Arm {
         Ok(())
     }
 }
-impl MotionSpace<Arm> for Position {
-    type Target = u32;
+impl Space for Position {
+    type Value = u32;
 }
 impl MoveTo<Position> for Arm {
     fn move_to(&mut self, target: u32) -> RobotResult<()> {

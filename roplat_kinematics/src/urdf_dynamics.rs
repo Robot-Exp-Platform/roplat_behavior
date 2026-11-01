@@ -57,30 +57,21 @@ fn model_error(error: DescriptionError) -> RobotException {
 }
 
 impl<const N: usize> SpaceMap<JointSpace<N>, MassMatrixSpace<N>> for UrdfDynamics<N> {
-    type Input = [f64; N];
-    type Output = JMat<N>;
-
-    fn map(&self, q: Self::Input) -> RobotResult<Self::Output> {
+    fn map(&self, q: [f64; N]) -> RobotResult<JMat<N>> {
         let m = self.model.mass_matrix(&q).map_err(model_error)?;
         Ok(na::SMatrix::from_fn(|r, c| m[(r, c)]))
     }
 }
 
 impl<const N: usize> SpaceMap<CoriolisInputSpace<N>, JointTorqueSpace<N>> for UrdfDynamics<N> {
-    type Input = CoriolisInput<N>;
-    type Output = [f64; N];
-
     /// `C(q, q̇) q̇`: the efforts at zero acceleration without gravity.
-    fn map(&self, input: Self::Input) -> RobotResult<Self::Output> {
+    fn map(&self, input: CoriolisInput<N>) -> RobotResult<[f64; N]> {
         Ok(self.efforts(&input.q, &input.dq, &[0.0; N], [0.0; 3]))
     }
 }
 
 impl<const N: usize> SpaceMap<GravityInputSpace<N>, JointTorqueSpace<N>> for UrdfDynamics<N> {
-    type Input = GravityInput<N>;
-    type Output = [f64; N];
-
-    fn map(&self, input: Self::Input) -> RobotResult<Self::Output> {
+    fn map(&self, input: GravityInput<N>) -> RobotResult<[f64; N]> {
         Ok(self.efforts(&input.q, &[0.0; N], &[0.0; N], input.gravity))
     }
 }

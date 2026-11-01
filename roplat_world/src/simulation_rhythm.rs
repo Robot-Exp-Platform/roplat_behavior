@@ -19,6 +19,18 @@ pub enum SimPacing {
     WallClock(Duration),
 }
 
+/// The wall-clock pacing deadline overflowed `Instant`.
+#[derive(Debug)]
+pub struct PacingOverflow;
+
+impl std::fmt::Display for PacingOverflow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("simulation pacing deadline overflow")
+    }
+}
+
+impl std::error::Error for PacingOverflow {}
+
 /// Owns an engine and emits one unit tick after every successful physics step.
 ///
 /// The physics timestep belongs to the engine (`PhysicsEngine::set_step_time`),
@@ -27,8 +39,8 @@ pub enum SimPacing {
 ///
 /// A finite budget applies **per drive**. A second drive continues the engine's
 /// world without resetting it, and gets a new budget and pacing origin.
-/// Engine errors stop the domain and preserve the original error in
-/// `RoplatError::Io`; the downstream domain is not called for that failed step.
+/// Engine errors stop the domain and preserve the original error behind
+/// `RoplatError::Node`; the downstream domain is not called for that failed step.
 ///
 /// The engine stays owned by this rhythm; its external `Resources` channel is `()`.
 /// Entry/exit do not reset the engine or call its consuming `shutdown` method.
@@ -138,7 +150,7 @@ where
             }
             if let Err(error) = self.engine.step() {
                 context.request_stop();
-                return (Err(std::io::Error::other(error).into()), nodes);
+                return (Err(RoplatError::Node(error.into())), nodes);
             }
             self.steps_completed += 1;
 
@@ -168,12 +180,7 @@ where
                     Some(target) => next_target = target,
                     None => {
                         context.request_stop();
-                        return (
-                            Err(RoplatError::Arithmetic(
-                                "simulation pacing deadline overflow".into(),
-                            )),
-                            nodes,
-                        );
+                        return (Err(RoplatError::Node(Box::new(PacingOverflow))), nodes);
                     }
                 }
             }

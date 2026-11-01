@@ -71,17 +71,17 @@ impl<const N: usize, P> ::roplat::Lifecycle for JointStateNode<N, P> {
     type Error = ::roplat::RoplatError;
 }
 
-/// Lets a graph raise a lookup or write failure with `?`; the error is
-/// carried as an I/O error source.
+/// Lets a graph raise a lookup or write failure with `?`; the error enters
+/// the core through `RoplatError::Node`.
 impl From<FrameError> for ::roplat::RoplatError {
     fn from(error: FrameError) -> Self {
-        std::io::Error::other(error).into()
+        ::roplat::RoplatError::Node(Box::new(error))
     }
 }
 
 /// Lets the head of a System issue group handles with `?`.
 impl From<TreeError> for ::roplat::RoplatError {
     fn from(error: TreeError) -> Self {
-        std::io::Error::other(error).into()
+        ::roplat::RoplatError::Node(Box::new(error))
     }
 }

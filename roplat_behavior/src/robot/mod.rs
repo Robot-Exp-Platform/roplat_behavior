@@ -19,7 +19,7 @@ pub use async_control::{AsyncControl, AsyncControlCallback, AsyncControlWith};
 pub use category::{Humanoid, MobileBase, Quadruped};
 pub use control::{
     ArmTorqueControl, BalanceControl, BaseVelocityControl, CartesianPoseControl,
-    CartesianVelocityControl, Control, ControlSpace, ControlStep, ControlWith,
+    CartesianVelocityControl, Control, ControlExit, ControlSpace, ControlStep, ControlWith,
     JointPositionControl, JointVelocityControl, TorqueControl,
 };
 pub use device::{Camera, ForceTorqueSensor, Gripper, ImuSensor};
@@ -29,9 +29,9 @@ pub use limits::MotionLimits;
 pub use math::{Iso3, JMat, JVec, Jaco};
 pub use model::{
     CoriolisInput, DynamicsModel, ForwardKinematics, GravityInput, InverseKinematics,
-    JacobianModel, SpaceMap, TypedSpaceMap,
+    JacobianModel, SpaceMap,
 };
-pub use motion::{Motion, MotionFile, MotionSpace, MoveTo, MoveTraj};
+pub use motion::{Motion, MotionFile, MoveTo, MoveTraj, Space};
 pub use observe::{ControlObservation, ControlObserver};
 pub use roplat_msgs::{CartesianLimits, JointLimits, LoadState};
 pub use spaces::{
@@ -50,7 +50,7 @@ use std::time::Duration;
 
 use crate::RobotResult;
 
-/// # Robot 鈥?the single core behavior every device shares
+/// # Robot: the single core behavior every device shares
 ///
 /// `Robot` is the one root trait of the whole capability stack: it defines the
 /// per-tick measured [`State`](Robot::State) plus a universally meaningful
@@ -76,7 +76,7 @@ pub trait Robot {
     /// Read the latest measured state.
     fn read_state(&mut self) -> RobotResult<Self::State>;
 
-    /// One-time bring-up (connect, allocate handles, 鈥?.
+    /// One-time bring-up (connect, allocate handles, ...).
     fn init(&mut self) -> RobotResult<()> {
         Ok(())
     }

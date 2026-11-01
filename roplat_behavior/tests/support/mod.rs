@@ -34,7 +34,7 @@ impl Robot for TestRobot {
         Ok(())
     }
 }
-impl ControlSpace<TestRobot> for TestControl {
+impl ControlSpace for TestControl {
     type Obs = u32;
     type Command = u32;
 }
@@ -59,7 +59,7 @@ impl ControlWith<TestControl> for TestRobot {
                         continue;
                     }
                 }
-                ControlFlow::Break(()) => {}
+                ControlFlow::Break(_) => {}
             }
             self.trace.lock().unwrap().exits += 1;
             return if self.fail_exit {

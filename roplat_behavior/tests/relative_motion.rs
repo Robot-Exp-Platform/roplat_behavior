@@ -1,5 +1,6 @@
 //! A `Relative<S>` target is an offset from where the robot is; the contract
 //! implements it once for every robot.
+use roplat_behavior::JointLimits;
 use std::time::Duration;
 
 use roplat_behavior::{
@@ -27,8 +28,7 @@ impl Robot for Recorder {
 }
 
 impl Joints<2> for Recorder {
-    const JOINT_MIN: [f64; 2] = [-3.0; 2];
-    const JOINT_MAX: [f64; 2] = [3.0; 2];
+    const JOINT_LIMITS: JointLimits<2> = JointLimits::positions([-3.0; 2], [3.0; 2]);
 }
 
 impl EndPoint for Recorder {}

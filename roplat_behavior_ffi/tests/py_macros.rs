@@ -3,6 +3,7 @@
 //! `cargo check --tests --features py`, not run.
 #![cfg(feature = "py")]
 
+use roplat_behavior::JointLimits;
 use std::time::Duration;
 
 use pyo3::{pyclass, pymethods};
@@ -34,8 +35,7 @@ impl Robot for Mock {
 }
 
 impl Joints<2> for Mock {
-    const JOINT_MIN: [f64; 2] = [-1.0; 2];
-    const JOINT_MAX: [f64; 2] = [1.0; 2];
+    const JOINT_LIMITS: JointLimits<2> = JointLimits::positions([-1.0; 2], [1.0; 2]);
 }
 
 impl EndPoint for Mock {}
@@ -104,14 +104,14 @@ impl Arm<2> for Mock {
 macro_rules! control_with {
     ($($channel:ty => $hold:expr;)*) => {$(
         impl ControlWith<$channel> for Mock {
-            fn hold_command(_obs: &<$channel as ControlSpace<Mock>>::Obs)
-                -> <$channel as ControlSpace<Mock>>::Command {
+            fn hold_command(_obs: &<$channel as ControlSpace>::Obs)
+                -> <$channel as ControlSpace>::Command {
                 $hold
             }
             fn control_with_flow<F>(&mut self, _closure: F) -> RobotResult<()>
             where
-                F: FnMut(<$channel as ControlSpace<Mock>>::Obs, Duration)
-                    -> ControlStep<<$channel as ControlSpace<Mock>>::Command>,
+                F: FnMut(<$channel as ControlSpace>::Obs, Duration)
+                    -> ControlStep<<$channel as ControlSpace>::Command>,
             {
                 Ok(())
             }

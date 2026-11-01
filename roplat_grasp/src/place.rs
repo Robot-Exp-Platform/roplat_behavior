@@ -122,7 +122,10 @@ impl std::error::Error for PlaceError {}
 /// on a copy. After executing the plan, detach the object in the caller's
 /// own scene with [`PlanningScene::detach`] at
 /// [`release_configuration`](PlacePlan::release_configuration).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the place planner's inputs are independent: scene, hand, object, support, placements, start, joint range, inverse kinematics and options; grouping them into a planning context is the later form (style ruling 10)"
+)]
 pub fn plan_place<const N: usize>(
     scene: &PlanningScene<N>,
     hand: &EndEffector,
@@ -153,7 +156,10 @@ pub fn plan_place<const N: usize>(
 /// As [`plan_place`], with every segment checked whole by
 /// [`PlanningScene::motion_is_free`], as
 /// [`plan_pick_motion`](crate::plan_pick_motion) does for the pick.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the place motion planner's inputs are independent: scene, hand, object, support, placements, start, joint range, inverse kinematics and options; grouping them into a planning context is the later form (style ruling 10)"
+)]
 pub fn plan_place_motion<const N: usize>(
     scene: &PlanningScene<N>,
     hand: &EndEffector,
@@ -181,7 +187,10 @@ pub fn plan_place_motion<const N: usize>(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal step taking the public planner's inputs unchanged"
+)]
 fn place<const N: usize>(
     scene: &PlanningScene<N>,
     hand: &EndEffector,
@@ -229,7 +238,10 @@ fn place<const N: usize>(
 
 type Paths<const N: usize> = (Vec<[f64; N]>, Vec<[f64; N]>, Vec<[f64; N]>);
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal step taking the public planner's inputs unchanged"
+)]
 fn try_placement<const N: usize>(
     scene: &PlanningScene<N>,
     hand: &EndEffector,

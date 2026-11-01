@@ -8,10 +8,16 @@ use std::{
 
 use nalgebra as na;
 
+use std::ops::ControlFlow::{Break, Continue};
+
+use crate::exit::missing;
 use crate::target::{
-    constant_joint_target_fn, constant_pose_target_fn, joint_traj_target_fn, pose_traj_target_fn,
+    EmptyTrajectory, constant_joint_target_fn, constant_pose_target_fn, joint_traj_target_fn,
+    pose_traj_target_fn,
 };
-use roplat_behavior::{ArmState, ForwardKinematics, JVec, JacobianModel, JointState, Pose};
+use roplat_behavior::{
+    ArmState, ControlExit, ControlStep, ForwardKinematics, JVec, JacobianModel, JointState, Pose,
+};
 
 #[derive(Debug, Clone)]
 pub struct JointImpedanceSessionHandle<const N: usize> {
@@ -79,7 +85,8 @@ impl CartesianImpedanceSessionHandle {
     }
 }
 
-/// Computes joint-space impedance torque for one joint-state sample.
+/// Computes joint-space impedance torque for one measured joint position and
+/// velocity.
 ///
 /// The function is pure and does not own any controller state. It is useful for
 /// tests, custom closures, or drivers that need to embed the torque calculation
@@ -92,15 +99,13 @@ pub fn joint_space_impedance_torque<const N: usize>(
     target: [f64; N],
     stiffness: [f64; N],
     damping: [f64; N],
-    state: &JointState<N>,
+    q: &[f64; N],
+    dq: &[f64; N],
 ) -> [f64; N] {
-    let joint = state.meas.q().unwrap_or(target);
-    let joint_vel = state.meas.dq().unwrap_or([0.0; N]);
     let mut torque = [0.0; N];
 
     for i in 0..N {
-        let position_error = target[i] - joint[i];
-        torque[i] = stiffness[i] * position_error - damping[i] * joint_vel[i];
+        torque[i] = stiffness[i] * (target[i] - q[i]) - damping[i] * dq[i];
     }
 
     torque
@@ -114,7 +119,7 @@ pub fn joint_impedance_control<const N: usize>(
     target: [f64; N],
     stiffness: [f64; N],
     damping: [f64; N],
-) -> impl FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static {
+) -> impl FnMut(JointState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static {
     joint_impedance_tracking_control(constant_joint_target_fn(target), stiffness, damping)
 }
 
@@ -126,8 +131,15 @@ pub fn joint_traj_impedance_control<const N: usize>(
     traj: Vec<[f64; N]>,
     stiffness: [f64; N],
     damping: [f64; N],
-) -> impl FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static {
-    joint_impedance_tracking_control(joint_traj_target_fn(traj), stiffness, damping)
+) -> Result<
+    impl FnMut(JointState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static,
+    EmptyTrajectory,
+> {
+    Ok(joint_impedance_tracking_control(
+        joint_traj_target_fn(traj)?,
+        stiffness,
+        damping,
+    ))
 }
 
 /// Builds a joint-space impedance controller around a dynamic target source.
@@ -139,14 +151,22 @@ pub fn joint_impedance_tracking_control<F, const N: usize>(
     mut target_fn: F,
     stiffness: [f64; N],
     damping: [f64; N],
-) -> impl FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static
+) -> impl FnMut(JointState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static
 where
     F: FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static,
 {
     move |state, duration| {
         let (target, done) = target_fn(state, duration);
-        let torque = joint_space_impedance_torque(target, stiffness, damping, &state);
-        (torque, done)
+        let Some(q) = state.meas.q() else {
+            return Break(missing("joint positions"));
+        };
+        let Some(dq) = state.meas.dq() else {
+            return Break(missing("joint velocities"));
+        };
+        Continue((
+            joint_space_impedance_torque(target, stiffness, damping, &q, &dq),
+            done,
+        ))
     }
 }
 
@@ -161,7 +181,7 @@ pub fn joint_impedance_session<const N: usize>(
     stiffness: [f64; N],
     damping: [f64; N],
 ) -> (
-    impl FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static,
+    impl FnMut(JointState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static,
     JointImpedanceSessionHandle<N>,
 ) {
     let handle = JointImpedanceSessionHandle {
@@ -177,14 +197,18 @@ pub fn joint_impedance_session<const N: usize>(
     let is_finished = handle.is_finished.clone();
 
     let controller = move |state: JointState<N>, _duration: Duration| {
-        let target = target
-            .lock()
-            .unwrap()
-            .unwrap_or_else(|| state.meas.q().unwrap_or([0.0; N]));
+        let Some(q) = state.meas.q() else {
+            return Break(missing("joint positions"));
+        };
+        let Some(dq) = state.meas.dq() else {
+            return Break(missing("joint velocities"));
+        };
+        // No target holds the arm where it is measured.
+        let target = target.lock().unwrap().unwrap_or(q);
         let stiffness = *stiffness.lock().unwrap();
         let damping = *damping.lock().unwrap();
-        let torque = joint_space_impedance_torque(target, stiffness, damping, &state);
-        (torque, is_finished.load(Ordering::SeqCst))
+        let torque = joint_space_impedance_torque(target, stiffness, damping, &q, &dq);
+        Continue((torque, is_finished.load(Ordering::SeqCst)))
     };
 
     (controller, handle)
@@ -200,16 +224,17 @@ pub fn cartesian_impedance_tracking_control<M, F, const N: usize>(
     mut target_fn: F,
     stiffness: [f64; 6],
     damping: [f64; 6],
-) -> impl FnMut(ArmState<N>, Duration) -> ([f64; N], bool) + Send + 'static
+) -> impl FnMut(ArmState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static
 where
     M: ForwardKinematics<N> + JacobianModel<N> + Send + 'static,
     F: FnMut(ArmState<N>, Duration) -> (Pose, bool) + Send + 'static,
 {
     move |state, duration| {
         let (target, done) = target_fn(state.clone(), duration);
-        let torque = cartesian_impedance_torque(&model, target, stiffness, damping, &state)
-            .unwrap_or([0.0; N]);
-        (torque, done)
+        match cartesian_impedance_torque(&model, target, stiffness, damping, &state) {
+            Ok(torque) => Continue((torque, done)),
+            Err(exit) => Break(exit),
+        }
     }
 }
 
@@ -256,7 +281,7 @@ pub fn cartesian_impedance_control<M, const N: usize>(
     target: Pose,
     stiffness: [f64; 6],
     damping: [f64; 6],
-) -> impl FnMut(ArmState<N>, Duration) -> ([f64; N], bool) + Send + 'static
+) -> impl FnMut(ArmState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static
 where
     M: ForwardKinematics<N> + JacobianModel<N> + Send + 'static,
 {
@@ -274,11 +299,19 @@ pub fn cartesian_traj_impedance_control<M, const N: usize>(
     traj: Vec<Pose>,
     stiffness: [f64; 6],
     damping: [f64; 6],
-) -> impl FnMut(ArmState<N>, Duration) -> ([f64; N], bool) + Send + 'static
+) -> Result<
+    impl FnMut(ArmState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static,
+    EmptyTrajectory,
+>
 where
     M: ForwardKinematics<N> + JacobianModel<N> + Send + 'static,
 {
-    cartesian_impedance_tracking_control(model, pose_traj_target_fn(traj), stiffness, damping)
+    Ok(cartesian_impedance_tracking_control(
+        model,
+        pose_traj_target_fn(traj)?,
+        stiffness,
+        damping,
+    ))
 }
 
 /// Builds a handle-driven Cartesian impedance session.
@@ -292,7 +325,7 @@ pub fn cartesian_impedance_session<M, const N: usize>(
     stiffness: [f64; 6],
     damping: [f64; 6],
 ) -> (
-    impl FnMut(ArmState<N>, Duration) -> ([f64; N], bool) + Send + 'static,
+    impl FnMut(ArmState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static,
     CartesianImpedanceSessionHandle,
 )
 where
@@ -311,43 +344,52 @@ where
     let is_finished = handle.is_finished.clone();
 
     let controller = move |state: ArmState<N>, _duration: Duration| {
-        let fallback_target = state.flange.meas.pose().unwrap_or_default();
-        let target = target.lock().unwrap().unwrap_or(fallback_target);
+        // No target holds the flange where it is measured.
+        let target = match *target.lock().unwrap() {
+            Some(target) => target,
+            None => match state.flange.meas.pose() {
+                Some(pose) => pose,
+                None => return Break(missing("flange pose")),
+            },
+        };
         let stiffness = *stiffness.lock().unwrap();
         let damping = *damping.lock().unwrap();
-        let torque = cartesian_impedance_torque(&model, target, stiffness, damping, &state)
-            .unwrap_or([0.0; N]);
-        (torque, is_finished.load(Ordering::SeqCst))
+        match cartesian_impedance_torque(&model, target, stiffness, damping, &state) {
+            Ok(torque) => Continue((torque, is_finished.load(Ordering::SeqCst))),
+            Err(exit) => Break(exit),
+        }
     };
 
     (controller, handle)
 }
 
+/// The torque for one cycle, or why the session must end: a missing measured
+/// joint position or velocity, or a failed model query. The flange pose and
+/// twist come from the measurement when present and from the model otherwise.
 fn cartesian_impedance_torque<M, const N: usize>(
     model: &M,
     target: Pose,
     stiffness: [f64; 6],
     damping: [f64; 6],
     state: &ArmState<N>,
-) -> Option<[f64; N]>
+) -> Result<[f64; N], ControlExit>
 where
     M: ForwardKinematics<N> + JacobianModel<N>,
 {
-    let q = state.joint.meas.q().unwrap_or([0.0; N]);
-    let dq = state.joint.meas.dq().unwrap_or([0.0; N]);
-    let current_pose = state
-        .flange
-        .meas
-        .pose()
-        .or_else(|| model.forward_kinematics(q).ok())
-        .unwrap_or(target);
-    let current_velocity = state
-        .flange
-        .meas
-        .twist()
-        .or_else(|| model.twist(q, dq).ok())
-        .map(<[f64; 6]>::from)
-        .unwrap_or([0.0; 6]);
+    let Some(q) = state.joint.meas.q() else {
+        return Err(missing("joint positions"));
+    };
+    let Some(dq) = state.joint.meas.dq() else {
+        return Err(missing("joint velocities"));
+    };
+    let current_pose = match state.flange.meas.pose() {
+        Some(pose) => pose,
+        None => model.forward_kinematics(q).map_err(ControlExit::Failed)?,
+    };
+    let current_velocity: [f64; 6] = match state.flange.meas.twist() {
+        Some(twist) => twist.into(),
+        None => model.twist(q, dq).map_err(ControlExit::Failed)?.into(),
+    };
 
     let wrench = cartesian_space_impedance_wrench(
         target,
@@ -356,11 +398,11 @@ where
         current_pose,
         current_velocity,
     );
-    let jacobian = model.jacobian(q).ok()?;
+    let jacobian = model.jacobian(q).map_err(ControlExit::Failed)?;
     let torque = jacobian.transpose() * na::SVector::<f64, 6>::from_column_slice(&wrench);
     let torque: [f64; N] = JVec::<N>::from_column_slice(torque.as_slice())
         .as_slice()
         .try_into()
-        .ok()?;
-    Some(torque)
+        .expect("a joint-space vector has N entries");
+    Ok(torque)
 }

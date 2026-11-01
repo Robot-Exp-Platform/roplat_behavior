@@ -48,7 +48,7 @@ where
 /// which I/O runtime the future needs; this trait itself has no Tokio dependency.
 ///
 /// Each callback is awaited to completion, and callbacks never overlap.
-/// `Continue((command, done))` commits the valid command; `Break(())` sends no
+/// `Continue((command, done))` commits the valid command; `Break(exit)` sends no
 /// algorithm command for that cycle and enters device-specific termination.
 /// The session returns only after its termination protocol finishes or fails.
 /// This is cooperative completion, not a guarantee for dropped futures or panic.
@@ -56,7 +56,7 @@ where
 ///
 /// This capability has no blocking default and does not require `ControlWith`.
 /// Drivers opt in only when they can provide the complete asynchronous session.
-pub trait AsyncControlWith<S: ControlSpace<Self>>: Robot + Send {
+pub trait AsyncControlWith<S: ControlSpace>: Robot + Send {
     fn control_native_async<C>(
         &mut self,
         callback: &mut C,
@@ -72,7 +72,7 @@ pub trait AsyncControl: Robot + Send + Sized {
         callback: &mut C,
     ) -> impl Future<Output = RobotResult<()>> + Send
     where
-        S: ControlSpace<Self>,
+        S: ControlSpace,
         Self: AsyncControlWith<S>,
         C: AsyncControlCallback<S::Obs, S::Command>,
     {

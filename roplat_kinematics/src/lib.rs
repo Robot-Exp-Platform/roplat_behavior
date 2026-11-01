@@ -96,13 +96,12 @@ macro_rules! dh_kinematics {
                 $crate::__private::roplat_behavior::FlangeSpace,
             > for $ty
         {
-            type Input = [f64; $n];
-            type Output = $crate::__private::roplat_behavior::Pose;
-
             fn map(
                 &self,
-                input: Self::Input,
-            ) -> $crate::__private::roplat_behavior::RobotResult<Self::Output> {
+                input: [f64; $n],
+            ) -> $crate::__private::roplat_behavior::RobotResult<
+                $crate::__private::roplat_behavior::Pose,
+            > {
                 Ok(<$ty as $crate::ArmForwardKinematics<$n>>::fk_end_pose(
                     &input,
                 ))
@@ -115,13 +114,12 @@ macro_rules! dh_kinematics {
                 $crate::__private::roplat_behavior::JacobianSpace<$n>,
             > for $ty
         {
-            type Input = [f64; $n];
-            type Output = $crate::__private::roplat_behavior::Jaco<$n>;
-
             fn map(
                 &self,
-                input: Self::Input,
-            ) -> $crate::__private::roplat_behavior::RobotResult<Self::Output> {
+                input: [f64; $n],
+            ) -> $crate::__private::roplat_behavior::RobotResult<
+                $crate::__private::roplat_behavior::Jaco<$n>,
+            > {
                 Ok(<$ty as $crate::ArmForwardKinematics<$n>>::flange_jacobian(
                     &input,
                 ))
@@ -137,13 +135,10 @@ macro_rules! dh_kinematics {
                 $crate::__private::roplat_behavior::JointSpace<$n>,
             > for $ty
         {
-            type Input = $crate::__private::roplat_behavior::Pose;
-            type Output = [f64; $n];
-
             fn map(
                 &self,
-                input: Self::Input,
-            ) -> $crate::__private::roplat_behavior::RobotResult<Self::Output> {
+                input: $crate::__private::roplat_behavior::Pose,
+            ) -> $crate::__private::roplat_behavior::RobotResult<[f64; $n]> {
                 let q0 = $crate::__private::roplat_behavior::JVec::<$n>::from_row_slice(
                     &<$ty as $crate::__private::roplat_behavior::Joints<$n>>::JOINT_DEFAULT,
                 );

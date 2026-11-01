@@ -27,6 +27,8 @@ use crate::Robot;
 /// The observer receives an immutable state reference and cannot alter the
 /// controller command. It can still block, allocate or panic, so realtime
 /// drivers should document how these observers are executed.
+// dyn(c): observers of different types, registered by the driving side, share
+// one list.
 pub type ControlObserver<State> = Box<dyn FnMut(&State, Duration) + Send + 'static>;
 
 /// User-facing methods for registering robot-level control observers.

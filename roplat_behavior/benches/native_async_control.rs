@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-struct Channel;
+struct Channel<const W: usize>;
 struct CpuRobot<const W: usize> {
     cycles: usize,
     checksum: f64,
@@ -37,11 +37,11 @@ impl<const W: usize> Robot for CpuRobot<W> {
         Ok(())
     }
 }
-impl<const W: usize> ControlSpace<CpuRobot<W>> for Channel {
+impl<const W: usize> ControlSpace for Channel<W> {
     type Obs = usize;
     type Command = [f64; W];
 }
-impl<const W: usize> ControlWith<Channel> for CpuRobot<W> {
+impl<const W: usize> ControlWith<Channel<W>> for CpuRobot<W> {
     fn hold_command(_: &usize) -> [f64; W] {
         [0.0; W]
     }
@@ -57,13 +57,13 @@ impl<const W: usize> ControlWith<Channel> for CpuRobot<W> {
                         continue;
                     }
                 }
-                ControlFlow::Break(()) => {}
+                ControlFlow::Break(_) => {}
             }
             return Ok(());
         }
     }
 }
-impl<const W: usize> AsyncControlWith<Channel> for CpuRobot<W> {
+impl<const W: usize> AsyncControlWith<Channel<W>> for CpuRobot<W> {
     async fn control_native_async<C>(&mut self, callback: &mut C) -> RobotResult<()>
     where
         C: AsyncControlCallback<usize, [f64; W]>,
@@ -79,7 +79,7 @@ impl<const W: usize> AsyncControlWith<Channel> for CpuRobot<W> {
                         continue;
                     }
                 }
-                ControlFlow::Break(()) => {}
+                ControlFlow::Break(_) => {}
             }
             return Ok(());
         }
@@ -98,7 +98,7 @@ fn rhythm_path<const W: usize>(native: bool, cycles: usize, runtime: &tokio::run
     let mut robot = CpuRobot::<W>::new();
     let context = ExecutionContext::new();
     let (outcome, nodes) = if native {
-        runtime.block_on(AsyncControlRhythm::<CpuRobot<W>, Channel>::new().drive(
+        runtime.block_on(AsyncControlRhythm::<CpuRobot<W>, Channel<W>>::new().drive(
             0_u64,
             domain,
             (),
@@ -106,7 +106,7 @@ fn rhythm_path<const W: usize>(native: bool, cycles: usize, runtime: &tokio::run
             context,
         ))
     } else {
-        runtime.block_on(ControlRhythm::<CpuRobot<W>, Channel>::new().drive(
+        runtime.block_on(ControlRhythm::<CpuRobot<W>, Channel<W>>::new().drive(
             0_u64,
             domain,
             (),

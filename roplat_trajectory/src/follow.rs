@@ -360,11 +360,11 @@ mod node {
 
     use super::{JointTrajectoryFollower, TrackingError};
 
-    /// Carried as `RoplatError::Io`, as `ControlSessionError` and
-    /// `roplat_safety`'s violations are, so the core needs no variant for it.
+    /// Enters the core through `RoplatError::Node`, as `ControlSessionError`
+    /// and `roplat_safety`'s violations do.
     impl From<TrackingError> for RoplatError {
         fn from(error: TrackingError) -> Self {
-            std::io::Error::other(error).into()
+            RoplatError::Node(Box::new(error))
         }
     }
 
@@ -372,7 +372,7 @@ mod node {
         /// The tracking error a drive failed with, when it failed with one.
         pub fn find(error: &RoplatError) -> Option<&Self> {
             match error {
-                RoplatError::Io(io) => io.get_ref()?.downcast_ref(),
+                RoplatError::Node(error) => error.downcast_ref(),
                 _ => None,
             }
         }

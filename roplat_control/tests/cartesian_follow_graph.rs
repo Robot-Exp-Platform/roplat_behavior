@@ -77,7 +77,7 @@ impl ControlWith<CartesianPoseControl<1>> for Tool {
                         return Ok(());
                     }
                 }
-                ControlFlow::Break(()) => {
+                ControlFlow::Break(_) => {
                     self.breaks += 1;
                     return Ok(());
                 }

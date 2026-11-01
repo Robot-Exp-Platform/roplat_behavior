@@ -84,7 +84,7 @@ impl ControlWith<JointPositionControl<2>> for MockArm {
                         return Ok(());
                     }
                 }
-                ControlFlow::Break(()) => {
+                ControlFlow::Break(_) => {
                     self.broke = true;
                     match self.fault {
                         Fault::IgnoresBreak => continue,

@@ -4,7 +4,7 @@ use std::{future::Future, marker::PhantomData, ops::ControlFlow, time::Duration}
 
 use roplat::{Completion, Execution, ExecutionContext, Lifecycle, RoplatError, rhythm::Rhythm};
 
-use crate::{AsyncControlCallback, AsyncControlWith, ControlSpace, ControlStep};
+use crate::{AsyncControlCallback, AsyncControlWith, ControlExit, ControlSpace, ControlStep};
 
 use super::rhythm::{ControlDomainExit, device_error};
 
@@ -65,7 +65,7 @@ where
     async fn call(&mut self, observation: Obs, duration: Duration) -> ControlStep<Command> {
         if self.context.is_stopping() {
             self.exit = Some(ControlDomainExit::Stopped);
-            return ControlFlow::Break(());
+            return ControlFlow::Break(ControlExit::Stopped);
         }
         let current_nodes = self
             .nodes
@@ -79,12 +79,12 @@ where
             Ok(Completion::Stopped) => {
                 self.context.request_stop();
                 self.exit = Some(ControlDomainExit::Stopped);
-                ControlFlow::Break(())
+                ControlFlow::Break(ControlExit::Stopped)
             }
             Err(error) => {
                 self.context.request_stop();
                 self.exit = Some(ControlDomainExit::Failed(error));
-                ControlFlow::Break(())
+                ControlFlow::Break(ControlExit::Stopped)
             }
         }
     }
@@ -93,7 +93,7 @@ where
 impl<R, S> Rhythm for AsyncControlRhythm<R, S>
 where
     R: AsyncControlWith<S>,
-    S: ControlSpace<R> + Send,
+    S: ControlSpace + Send,
     S::Obs: Send,
     S::Command: Send,
 {

@@ -22,7 +22,7 @@ use std::{future::Future, marker::PhantomData, ops::ControlFlow, time::Duration}
 
 use roplat::{Completion, Execution, ExecutionContext, Lifecycle, RoplatError, rhythm::Rhythm};
 
-use crate::{ControlSpace, ControlWith, RobotException};
+use crate::{ControlExit, ControlSpace, ControlWith, RobotException};
 
 /// Why a domain asked the device session to end without another command.
 #[derive(Debug)]
@@ -33,11 +33,10 @@ pub enum ControlDomainExit {
 
 /// Device failure, retaining the preceding domain exit if there was one.
 ///
-/// Transported through `RoplatError::Io(std::io::Error)` so the core needs no
-/// robot-specific variant. `io_error.get_ref().and_then(|e| e.downcast_ref())`
-/// recovers this concrete type, including the original domain error. The I/O
-/// category identifies the device/session boundary, not necessarily a socket.
-/// No wrapper is allocated when only the domain fails or when control succeeds.
+/// Enters the core through `RoplatError::Node`; `downcast_ref` on that
+/// variant's payload recovers this concrete type, including the original
+/// domain error. No wrapper is allocated when only the domain fails or when
+/// control succeeds.
 #[derive(Debug, thiserror::Error)]
 #[error("control device/session failed: {device}; preceding domain exit: {domain:?}")]
 pub struct ControlSessionError {
@@ -50,7 +49,7 @@ pub(super) fn device_error(
     device: RobotException,
     domain: Option<ControlDomainExit>,
 ) -> RoplatError {
-    std::io::Error::other(ControlSessionError { domain, device }).into()
+    RoplatError::Node(Box::new(ControlSessionError { domain, device }))
 }
 
 /// A blocking device session driving one complete domain per control cycle.
@@ -77,7 +76,7 @@ impl<R, S> Lifecycle for ControlRhythm<R, S> {
 impl<R, S> Rhythm for ControlRhythm<R, S>
 where
     R: ControlWith<S> + Send,
-    S: ControlSpace<R> + Send,
+    S: ControlSpace + Send,
     S::Obs: Send,
     S::Command: Send,
 {
@@ -110,7 +109,7 @@ where
             <R as ControlWith<S>>::control_with_flow_async(robot, async |obs, duration| {
                 if context.is_stopping() {
                     domain_exit = Some(ControlDomainExit::Stopped);
-                    return ControlFlow::Break(());
+                    return ControlFlow::Break(ControlExit::Stopped);
                 }
                 let current_nodes = nodes
                     .take()
@@ -124,12 +123,12 @@ where
                     Ok(Completion::Stopped) => {
                         context.request_stop();
                         domain_exit = Some(ControlDomainExit::Stopped);
-                        ControlFlow::Break(())
+                        ControlFlow::Break(ControlExit::Stopped)
                     }
                     Err(error) => {
                         context.request_stop();
                         domain_exit = Some(ControlDomainExit::Failed(error));
-                        ControlFlow::Break(())
+                        ControlFlow::Break(ControlExit::Stopped)
                     }
                 }
             });

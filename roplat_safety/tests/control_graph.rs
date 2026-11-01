@@ -390,8 +390,8 @@ async fn guarded_cartesian(
 #[tokio::test]
 async fn cartesian_speed_above_its_bound_breaks() {
     let limits = CartesianLimits {
-        linear_velocity: 0.0505,
-        linear_acceleration: 20.0,
+        linear_velocity_max: 0.0505,
+        linear_acceleration_max: 20.0,
         ..CartesianLimits::UNBOUNDED
     };
     let guard = CommandGuard::new(CartesianVelocityCheck::new(limits));

@@ -4,7 +4,7 @@ use crate::{
     RobotResult,
     robot::{
         math::{JMat, JVec, Jaco},
-        motion::MotionSpace,
+        motion::Space,
         spaces::{
             CoriolisInputSpace, FlangeSpace, GravityInputSpace, JacobianSpace, JointSpace,
             JointTorqueSpace, MassMatrixSpace,
@@ -13,37 +13,12 @@ use crate::{
     },
 };
 
-/// Generic mapping from one named space to another.
-///
-/// `From` and `To` are type-level space markers. `Input` and `Output` are kept
-/// explicit so a mapping can carry extra context when needed, such as velocity
-/// for Coriolis terms or gravity direction for gravity compensation.
-pub trait SpaceMap<From, To> {
-    type Input;
-    type Output;
-
-    fn map(&self, input: Self::Input) -> RobotResult<Self::Output>;
-}
-
-/// Convenience adapter for maps whose input/output exactly match
-/// [`MotionSpace`] target types for the implementor.
-pub trait TypedSpaceMap<From, To>: Sized
-where
-    From: MotionSpace<Self>,
-    To: MotionSpace<Self>,
-{
-    fn map_space(&self, input: From::Target) -> RobotResult<To::Target>;
-}
-
-impl<T, From, To> TypedSpaceMap<From, To> for T
-where
-    T: SpaceMap<From, To> + Sized,
-    From: MotionSpace<T, Target = <T as SpaceMap<From, To>>::Input>,
-    To: MotionSpace<T, Target = <T as SpaceMap<From, To>>::Output>,
-{
-    fn map_space(&self, input: From::Target) -> RobotResult<To::Target> {
-        <T as SpaceMap<From, To>>::map(self, input)
-    }
+/// A mapping from one space to another: the model's description of how its
+/// quantities relate. A model is a composition of maps, and each
+/// `impl SpaceMap<A, B>` states that the type turns an `A` value into a `B`
+/// value. The spaces fix the value types; an implementor cannot choose others.
+pub trait SpaceMap<From: Space, To: Space> {
+    fn map(&self, input: From::Value) -> RobotResult<To::Value>;
 }
 
 /// Joint position and velocity input for Coriolis / centrifugal terms.
@@ -62,41 +37,29 @@ pub struct GravityInput<const N: usize> {
 
 /// Forward kinematics as a typed map from joint space to flange / end-effector
 /// pose space.
-pub trait ForwardKinematics<const N: usize>:
-    SpaceMap<JointSpace<N>, FlangeSpace, Input = [f64; N], Output = Pose>
-{
+pub trait ForwardKinematics<const N: usize>: SpaceMap<JointSpace<N>, FlangeSpace> {
     fn forward_kinematics(&self, q: [f64; N]) -> RobotResult<Pose> {
         self.map(q)
     }
 }
 
-impl<T, const N: usize> ForwardKinematics<N> for T where
-    T: SpaceMap<JointSpace<N>, FlangeSpace, Input = [f64; N], Output = Pose>
-{
-}
+impl<T, const N: usize> ForwardKinematics<N> for T where T: SpaceMap<JointSpace<N>, FlangeSpace> {}
 
 /// Inverse kinematics as a typed map from flange / end-effector pose space back
 /// to joint space.
 ///
 /// `roplat_kinematics::dh_kinematics!(Type, N, inverse)` implements this map
 /// for a Denavit–Hartenberg arm.
-pub trait InverseKinematics<const N: usize>:
-    SpaceMap<FlangeSpace, JointSpace<N>, Input = Pose, Output = [f64; N]>
-{
+pub trait InverseKinematics<const N: usize>: SpaceMap<FlangeSpace, JointSpace<N>> {
     fn inverse_kinematics(&self, target: Pose) -> RobotResult<[f64; N]> {
         self.map(target)
     }
 }
 
-impl<T, const N: usize> InverseKinematics<N> for T where
-    T: SpaceMap<FlangeSpace, JointSpace<N>, Input = Pose, Output = [f64; N]>
-{
-}
+impl<T, const N: usize> InverseKinematics<N> for T where T: SpaceMap<FlangeSpace, JointSpace<N>> {}
 
 /// Geometric Jacobian model as a typed map from joint space to Jacobian space.
-pub trait JacobianModel<const N: usize>:
-    SpaceMap<JointSpace<N>, JacobianSpace<N>, Input = [f64; N], Output = Jaco<N>>
-{
+pub trait JacobianModel<const N: usize>: SpaceMap<JointSpace<N>, JacobianSpace<N>> {
     fn jacobian(&self, q: [f64; N]) -> RobotResult<Jaco<N>> {
         self.map(q)
     }
@@ -106,20 +69,14 @@ pub trait JacobianModel<const N: usize>:
     }
 }
 
-impl<T, const N: usize> JacobianModel<N> for T where
-    T: SpaceMap<JointSpace<N>, JacobianSpace<N>, Input = [f64; N], Output = Jaco<N>>
-{
-}
+impl<T, const N: usize> JacobianModel<N> for T where T: SpaceMap<JointSpace<N>, JacobianSpace<N>> {}
 
 /// Dynamics model as typed maps for mass, Coriolis / centrifugal and gravity
 /// terms.
-pub trait DynamicsModel<const N: usize>: SpaceMap<JointSpace<N>, MassMatrixSpace<N>, Input = [f64; N], Output = JMat<N>>
-    + SpaceMap<
-        CoriolisInputSpace<N>,
-        JointTorqueSpace<N>,
-        Input = CoriolisInput<N>,
-        Output = [f64; N],
-    > + SpaceMap<GravityInputSpace<N>, JointTorqueSpace<N>, Input = GravityInput<N>, Output = [f64; N]>
+pub trait DynamicsModel<const N: usize>:
+    SpaceMap<JointSpace<N>, MassMatrixSpace<N>>
+    + SpaceMap<CoriolisInputSpace<N>, JointTorqueSpace<N>>
+    + SpaceMap<GravityInputSpace<N>, JointTorqueSpace<N>>
 {
     fn mass(&self, q: [f64; N]) -> RobotResult<JMat<N>> {
         <Self as SpaceMap<JointSpace<N>, MassMatrixSpace<N>>>::map(self, q)
@@ -141,17 +98,8 @@ pub trait DynamicsModel<const N: usize>: SpaceMap<JointSpace<N>, MassMatrixSpace
 }
 
 impl<T, const N: usize> DynamicsModel<N> for T where
-    T: SpaceMap<JointSpace<N>, MassMatrixSpace<N>, Input = [f64; N], Output = JMat<N>>
-        + SpaceMap<
-            CoriolisInputSpace<N>,
-            JointTorqueSpace<N>,
-            Input = CoriolisInput<N>,
-            Output = [f64; N],
-        > + SpaceMap<
-            GravityInputSpace<N>,
-            JointTorqueSpace<N>,
-            Input = GravityInput<N>,
-            Output = [f64; N],
-        >
+    T: SpaceMap<JointSpace<N>, MassMatrixSpace<N>>
+        + SpaceMap<CoriolisInputSpace<N>, JointTorqueSpace<N>>
+        + SpaceMap<GravityInputSpace<N>, JointTorqueSpace<N>>
 {
 }

@@ -54,16 +54,16 @@ impl<const N: usize> CartesianVelocityCheck<N> {
             Quantity::Velocity,
             Axis::Linear,
             linear,
-            limits.linear_velocity,
+            limits.linear_velocity_max,
         )?;
         bound::norm(
             Quantity::Velocity,
             Axis::Angular,
             angular,
-            limits.angular_velocity,
+            limits.angular_velocity_max,
         )?;
-        let accelerating = limits.linear_acceleration != f64::INFINITY
-            || limits.angular_acceleration != f64::INFINITY;
+        let accelerating = limits.linear_acceleration_max != f64::INFINITY
+            || limits.angular_acceleration_max != f64::INFINITY;
         let twist0 = match self.previous.or(self.start) {
             Some(twist0) => twist0,
             None => bound::measured(
@@ -73,7 +73,10 @@ impl<const N: usize> CartesianVelocityCheck<N> {
             )?,
         };
         let (linear, angular) = split(&std::array::from_fn(|i| twist[i] - twist0[i]));
-        let (la, aa) = (limits.linear_acceleration, limits.angular_acceleration);
+        let (la, aa) = (
+            limits.linear_acceleration_max,
+            limits.angular_acceleration_max,
+        );
         bound::norm_rate(Quantity::Acceleration, Axis::Linear, linear, la, dt)?;
         bound::norm_rate(Quantity::Acceleration, Axis::Angular, angular, aa, dt)?;
         Ok(*twist)

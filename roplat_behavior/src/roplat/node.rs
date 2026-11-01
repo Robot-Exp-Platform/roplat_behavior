@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::{MotionSpace, MoveTo, RobotResult, SpaceMap};
+use crate::{MoveTo, RobotResult, Space, SpaceMap};
 
 /// Node adapter for a one-shot [`MoveTo<S>`] command.
 ///
@@ -26,10 +26,10 @@ impl<R, S> Default for MotionNode<R, S> {
 impl<R, S> ::roplat::Node for MotionNode<R, S>
 where
     R: MoveTo<S> + Send,
-    S: MotionSpace<R> + Send,
-    S::Target: Send,
+    S: Space + Send,
+    S::Value: Send,
 {
-    type Input = S::Target;
+    type Input = S::Value;
     type Output = RobotResult<()>;
     type Resources = (R,);
 
@@ -61,13 +61,13 @@ impl<M, From, To> SpaceMapNode<M, From, To> {
 impl<M, From, To> ::roplat::Node for SpaceMapNode<M, From, To>
 where
     M: SpaceMap<From, To> + Send + Sync,
-    From: Send + Sync,
-    To: Send + Sync,
-    M::Input: Send,
-    M::Output: Send,
+    From: Space + Send + Sync,
+    To: Space + Send + Sync,
+    From::Value: Send,
+    To::Value: Send,
 {
-    type Input = M::Input;
-    type Output = RobotResult<M::Output>;
+    type Input = From::Value;
+    type Output = RobotResult<To::Value>;
     type Resources = ();
 
     async fn process(&mut self, input: Self::Input, _resources: ()) -> Self::Output {

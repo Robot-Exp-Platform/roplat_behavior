@@ -116,7 +116,10 @@ impl std::error::Error for PickError {}
 /// a copy. After executing the plan, attach the object in the caller's own
 /// scene with [`PlanningScene::attach`] at
 /// [`grasp_configuration`](PickPlan::grasp_configuration).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the pick planner's inputs are independent: scene, hand, object, support, grasps, start, joint range, inverse kinematics and options; grouping them into a planning context is the later form (style ruling 10)"
+)]
 pub fn plan_pick<const N: usize>(
     scene: &PlanningScene<N>,
     hand: &EndEffector,
@@ -150,7 +153,10 @@ pub fn plan_pick<const N: usize>(
 /// `roplat_scene::motion`). A thin obstacle between two samples, such as a
 /// shelf edge, is not stepped over. The `resolution` of `options` is not
 /// used.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the pick motion planner's inputs are independent: scene, hand, object, support, grasps, start, joint range, inverse kinematics and options; grouping them into a planning context is the later form (style ruling 10)"
+)]
 pub fn plan_pick_motion<const N: usize>(
     scene: &PlanningScene<N>,
     hand: &EndEffector,
@@ -187,7 +193,10 @@ pub(crate) enum Check {
     Whole,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal step taking the public planner's inputs unchanged"
+)]
 fn pick<const N: usize>(
     scene: &PlanningScene<N>,
     hand: &EndEffector,
@@ -229,7 +238,10 @@ fn pick<const N: usize>(
 
 type Paths<const N: usize> = (Vec<[f64; N]>, Vec<[f64; N]>, Vec<[f64; N]>);
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal step taking the public planner's inputs unchanged"
+)]
 fn try_grasp<const N: usize>(
     scene: &PlanningScene<N>,
     hand: &EndEffector,
