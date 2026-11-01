@@ -3,7 +3,7 @@ use std::{ops::ControlFlow, time::Duration};
 use futures::executor;
 
 use crate::{
-    Robot, RobotResult,
+    Robot, RobotException, RobotResult,
     robot::{
         arm::ArmState,
         state::{BaseState, JointState},
@@ -15,13 +15,13 @@ use crate::{
 /// command types.
 ///
 /// This is the control-side mirror of
-/// [`MotionSpace`](crate::robot::motion::MotionSpace): it has **no methods** and
+/// [`Space`](crate::robot::motion::Space): it has **no methods** and
 /// only fixes the [`Obs`](ControlSpace::Obs) / [`Command`](ControlSpace::Command)
 /// pair. Because the channel is a *type-level marker*, two channels whose command
 /// payloads share the same Rust type, e.g. joint torque and joint position are
 /// both `[f64; N]`, they stay distinguishable, so a single device can implement one
 /// [`ControlWith`] impl per channel without coherence conflicts.
-pub trait ControlSpace<R: ?Sized> {
+pub trait ControlSpace {
     /// The observed-state type handed to the closure each control cycle.
     type Obs;
     /// The command type the closure returns each control cycle.
@@ -52,49 +52,67 @@ pub struct BaseVelocityControl;
 /// concrete humanoid or legged consumer needs richer balance commands.
 pub struct BalanceControl;
 
-impl<const N: usize, R> ControlSpace<R> for TorqueControl<N> {
+impl<const N: usize> ControlSpace for TorqueControl<N> {
     type Obs = JointState<N>;
     type Command = [f64; N];
 }
 
-impl<const N: usize, R> ControlSpace<R> for ArmTorqueControl<N> {
+impl<const N: usize> ControlSpace for ArmTorqueControl<N> {
     type Obs = ArmState<N>;
     type Command = [f64; N];
 }
 
-impl<const N: usize, R> ControlSpace<R> for JointPositionControl<N> {
+impl<const N: usize> ControlSpace for JointPositionControl<N> {
     type Obs = JointState<N>;
     type Command = [f64; N];
 }
 
-impl<const N: usize, R> ControlSpace<R> for JointVelocityControl<N> {
+impl<const N: usize> ControlSpace for JointVelocityControl<N> {
     type Obs = JointState<N>;
     type Command = [f64; N];
 }
 
-impl<const N: usize, R> ControlSpace<R> for CartesianVelocityControl<N> {
+impl<const N: usize> ControlSpace for CartesianVelocityControl<N> {
     type Obs = ArmState<N>;
     type Command = [f64; 6];
 }
 
-impl<const N: usize, R> ControlSpace<R> for CartesianPoseControl<N> {
+impl<const N: usize> ControlSpace for CartesianPoseControl<N> {
     type Obs = ArmState<N>;
     type Command = Pose;
 }
 
-impl<R> ControlSpace<R> for BaseVelocityControl {
+impl ControlSpace for BaseVelocityControl {
     type Obs = BaseState;
     type Command = [f64; 6];
 }
 
-impl<R> ControlSpace<R> for BalanceControl {
+impl ControlSpace for BalanceControl {
     type Obs = BaseState;
     type Command = [f64; 6];
 }
 
-/// One control cycle's decision. `Break` carries no fabricated command.
+/// Why a control closure ends the session without another command.
+#[derive(Debug)]
+pub enum ControlExit {
+    /// A cooperative stop: the session ends and `control_with_flow` returns
+    /// `Ok(())`.
+    Stopped,
+    /// The controller failed: the session ends and `control_with_flow` returns
+    /// this error. Nothing is fabricated in its place.
+    Failed(RobotException),
+}
+
+impl From<RobotException> for ControlExit {
+    fn from(error: RobotException) -> Self {
+        Self::Failed(error)
+    }
+}
+
+/// One control cycle's decision. `Continue((command, done))` sends the valid
+/// command; `Break(exit)` sends no command and ends the session with `exit`.
 /// The command and `done` flag exist only for successfully computed cycles.
-pub type ControlStep<Command> = ControlFlow<(), (Command, bool)>;
+pub type ControlStep<Command> = ControlFlow<ControlExit, (Command, bool)>;
 
 /// Realtime, closure-driven control - the bridge into blocking control loops.
 /// **Implemented by drivers**, one impl per control channel `S`.
@@ -117,7 +135,7 @@ pub type ControlStep<Command> = ControlFlow<(), (Command, bool)>;
 /// `control_with` runs a control relation until the closure reports `done = true`
 /// or the driver returns an error. The closure is scoped to the call, so drivers
 /// should not store it after `control_with` returns.
-pub trait ControlWith<S: ControlSpace<Self>>: Robot {
+pub trait ControlWith<S: ControlSpace>: Robot {
     /// Build a continuity-preserving fallback command from the latest observed
     /// state.
     ///
@@ -132,10 +150,12 @@ pub trait ControlWith<S: ControlSpace<Self>>: Robot {
     /// Canonical blocking control session, implemented by each driver.
     ///
     /// `Continue((command, done))` sends the valid command, then ends normally
-    /// if `done`. `Break(())` sends no algorithm command for this cycle and
-    /// enters the driver's session termination protocol. The driver must not
-    /// invoke the callback again after either exit. Protocol-specific termination
-    /// packets remain the driver's responsibility; `Break` is not an emergency stop.
+    /// if `done`. `Break(exit)` sends no algorithm command for this cycle and
+    /// enters the driver's session termination protocol; the session then
+    /// returns `Ok(())` for [`ControlExit::Stopped`] and `Err(error)` for
+    /// [`ControlExit::Failed`]. The driver must not invoke the callback again
+    /// after either exit. Protocol-specific termination packets remain the
+    /// driver's responsibility; `Break` is not an emergency stop.
     fn control_with_flow<F>(&mut self, closure: F) -> RobotResult<()>
     where
         F: FnMut(S::Obs, Duration) -> ControlStep<S::Command>;
@@ -190,7 +210,7 @@ pub trait Control: Robot + Sized {
     /// Blocking session with an explicit no-command exit path.
     fn control_with_flow<S, F>(&mut self, closure: F) -> RobotResult<()>
     where
-        S: ControlSpace<Self>,
+        S: ControlSpace,
         Self: ControlWith<S>,
         F: FnMut(S::Obs, Duration) -> ControlStep<S::Command>,
     {
@@ -200,7 +220,7 @@ pub trait Control: Robot + Sized {
     /// Async callback variant of [`Control::control_with_flow`]; still blocking.
     fn control_with_flow_async<S, F>(&mut self, closure: F) -> RobotResult<()>
     where
-        S: ControlSpace<Self>,
+        S: ControlSpace,
         Self: ControlWith<S>,
         F: async FnMut(S::Obs, Duration) -> ControlStep<S::Command>,
     {
@@ -209,7 +229,7 @@ pub trait Control: Robot + Sized {
 
     fn control_with<S, F>(&mut self, closure: F) -> RobotResult<()>
     where
-        S: ControlSpace<Self>,
+        S: ControlSpace,
         Self: ControlWith<S>,
         F: FnMut(S::Obs, Duration) -> (S::Command, bool),
     {
@@ -220,7 +240,7 @@ pub trait Control: Robot + Sized {
     /// [`ControlWith::hold_command`].
     fn hold_command<S>(&self, obs: &S::Obs) -> S::Command
     where
-        S: ControlSpace<Self>,
+        S: ControlSpace,
         Self: ControlWith<S> + Sized,
     {
         <Self as ControlWith<S>>::hold_command(obs)
@@ -230,7 +250,7 @@ pub trait Control: Robot + Sized {
     /// See [`ControlWith::control_with_async`].
     fn control_with_async<S, F>(&mut self, closure: F) -> RobotResult<()>
     where
-        S: ControlSpace<Self>,
+        S: ControlSpace,
         Self: ControlWith<S>,
         F: async FnMut(S::Obs, Duration) -> (S::Command, bool),
     {

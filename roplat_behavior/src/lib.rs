@@ -32,16 +32,16 @@ pub mod behavior {
         Arm, ArmState, ArmTorqueControl, AsyncControl, AsyncControlCallback, BalanceControl,
         BasePoseSpace, BaseState, BaseVelocityControl, BaseVelocitySpace, Camera, CartesianLimits,
         CartesianPoseControl, CartesianVelocityControl, CenterOfMassSpace, ContactState, Control,
-        ControlObservation, ControlObserver, ControlSpace, ControlStep, CoriolisInput,
+        ControlExit, ControlObservation, ControlObserver, ControlSpace, ControlStep, CoriolisInput,
         CoriolisInputSpace, DynamicsModel, EndEffectorState, EndPoint, EndPointPose, EndSpace,
         FlangeSpace, FootSpace, ForceTorqueSensor, ForwardKinematics, GaitCommand, GaitSpace,
         GravityInput, GravityInputSpace, Gripper, HandSpace, Humanoid, HumanoidState, ImuSensor,
         InverseKinematics, JacobianModel, JacobianSpace, JointLimits, JointPositionControl,
         JointSample, JointSpace, JointState, JointTorqueSpace, JointVelocityControl, Joints,
         LoadState, MassMatrixSpace, MobileBase, MobileBaseState, Motion, MotionFile, MotionLimits,
-        MotionSpace, Pose, Quadruped, QuadrupedState, Relative, RelativeSpace, Robot,
-        RobotDescription, SpaceMap, SpatialSample, StateView, TcpSpace, TorqueControl,
-        TypedSpaceMap, WholeBodyJointSpace, WholeBodyTorqueSpace, WholeBodyVelocitySpace,
+        Pose, Quadruped, QuadrupedState, Relative, RelativeSpace, Robot, RobotDescription, Space,
+        SpaceMap, SpatialSample, StateView, TcpSpace, TorqueControl, WholeBodyJointSpace,
+        WholeBodyTorqueSpace, WholeBodyVelocitySpace,
     };
 
     pub use crate::simulation::{ModelFormat, SimulationModel};

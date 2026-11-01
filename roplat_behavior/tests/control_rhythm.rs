@@ -15,10 +15,10 @@ use support::{TestControl, TestRobot};
 
 type TestRhythm = ControlRhythm<TestRobot, TestControl>;
 fn session_error(error: &RoplatError) -> &ControlSessionError {
-    let RoplatError::Io(error) = error else {
+    let RoplatError::Node(error) = error else {
         panic!("expected device/session error: {error:?}")
     };
-    error.get_ref().unwrap().downcast_ref().unwrap()
+    error.downcast_ref().unwrap()
 }
 
 #[tokio::test]
@@ -56,18 +56,15 @@ async fn domain_failure_returns_nodes_and_original_error_without_command() {
     let (result, nodes) = rhythm
         .drive(
             7,
-            |n, _, _| async move {
-                (
-                    Err(RoplatError::Arithmetic("controller failed".into())),
-                    n + 1,
-                )
-            },
+            |n, _, _| async move { (Err(RoplatError::Node("controller failed".into())), n + 1) },
             (),
             (&mut robot,),
             context.clone(),
         )
         .await;
-    assert!(matches!(result, Err(RoplatError::Arithmetic(ref s)) if s == "controller failed"));
+    assert!(
+        matches!(result, Err(RoplatError::Node(ref s)) if s.to_string() == "controller failed")
+    );
     assert_eq!(nodes, 8);
     assert!(context.is_stopping());
     let trace = trace.lock().unwrap();
@@ -162,7 +159,7 @@ async fn domain_and_device_cleanup_failures_are_both_retained() {
     let (result, nodes) = TestRhythm::new()
         .drive(
             7,
-            |n, _, _| async move { (Err(RoplatError::NodeProcessing("original".into())), n + 1) },
+            |n, _, _| async move { (Err(RoplatError::Node("original".into())), n + 1) },
             (),
             (&mut robot,),
             ExecutionContext::new(),
@@ -171,10 +168,10 @@ async fn domain_and_device_cleanup_failures_are_both_retained() {
     let error = result.unwrap_err();
     let session = session_error(&error);
     assert!(
-        matches!(session.domain, Some(ControlDomainExit::Failed(RoplatError::NodeProcessing(ref s))) if s == "original")
+        matches!(session.domain, Some(ControlDomainExit::Failed(RoplatError::Node(ref s))) if s.to_string() == "original")
     );
     assert!(
-        matches!(session.device, RobotException::CommandException(ref s) if s == "cleanup failed")
+        matches!(session.device, RobotException::CommandException(ref s) if s.to_string() == "cleanup failed")
     );
     assert_eq!(nodes, 8);
 }
@@ -305,10 +302,7 @@ impl Rhythm for CommandDomain {
         let (result, nodes) = domain(nodes, input, context.clone()).await;
         if self.fail {
             context.request_stop();
-            (
-                Err(RoplatError::NodeProcessing("nested domain".into())),
-                nodes,
-            )
+            (Err(RoplatError::Node("nested domain".into())), nodes)
         } else {
             (result, nodes)
         }
@@ -347,7 +341,7 @@ async fn nested_system_failure_returns_external_nodes_and_isolates_outcome() {
     .await
     .unwrap();
     assert!(
-        matches!(outcome,Err(RoplatError::NodeProcessing(ref message)) if message == "nested domain")
+        matches!(outcome,Err(RoplatError::Node(ref message)) if message.to_string() == "nested domain")
     );
     assert!(inner.fail);
     assert_eq!(controller.calls, 1);

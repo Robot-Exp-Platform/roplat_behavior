@@ -1,5 +1,6 @@
 //! A flange beyond the last DH frame, and inverse kinematics that reports an
 //! unreachable target.
+use roplat_behavior::JointLimits;
 use roplat_behavior::{ForwardKinematics, InverseKinematics, JacobianModel, Joints, Pose};
 use roplat_kinematics::{ArmForwardKinematics, ArmInverseKinematics, DhParam, dh_kinematics};
 
@@ -16,8 +17,7 @@ impl ArmForwardKinematics<2> for Planar {
 }
 
 impl Joints<2> for Planar {
-    const JOINT_MIN: [f64; 2] = [-3.; 2];
-    const JOINT_MAX: [f64; 2] = [3.; 2];
+    const JOINT_LIMITS: JointLimits<2> = JointLimits::positions([-3.; 2], [3.; 2]);
 }
 
 impl ArmInverseKinematics<2> for Planar {}

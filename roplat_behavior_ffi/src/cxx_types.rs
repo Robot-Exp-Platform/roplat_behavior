@@ -18,7 +18,7 @@ pub mod types {
             fn Position(tran: [f64; 3]) -> Box<CxxPose>;
             fn to_vec(&self) -> Vec<f64>;
             #[Self = "CxxPose"]
-            fn from_vec(vec: Vec<f64>) -> Box<CxxPose>;
+            fn from_vec(vec: Vec<f64>) -> Result<Box<CxxPose>>;
         }
     }
 
@@ -51,8 +51,19 @@ pub mod types {
         fn to_vec(&self) -> Vec<f64> {
             self.0.into()
         }
-        fn from_vec(vec: Vec<f64>) -> Box<Self> {
-            Box::new(CxxPose(vec.into()))
+        /// Seven numbers, as `to_vec` writes them: translation, then the
+        /// `x, y, z, w` quaternion. Any other length is an error.
+        fn from_vec(vec: Vec<f64>) -> Result<Box<Self>, String> {
+            let v: [f64; 7] = vec.as_slice().try_into().map_err(|_| {
+                format!(
+                    "a pose is seven numbers (translation and x, y, z, w quaternion), got {}",
+                    vec.len()
+                )
+            })?;
+            Ok(Box::new(CxxPose(Pose::from_quat_array(
+                [v[0], v[1], v[2]],
+                [v[3], v[4], v[5], v[6]],
+            ))))
         }
     }
 }

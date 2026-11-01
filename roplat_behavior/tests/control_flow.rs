@@ -1,4 +1,5 @@
 mod support;
+use roplat_behavior::ControlExit;
 use roplat_behavior::{Control, ControlStep};
 use std::{ops::ControlFlow, task::Poll};
 use support::{TestControl, TestRobot};
@@ -25,7 +26,7 @@ fn break_sends_no_command_and_never_calls_again() {
     robot
         .control_with_flow::<TestControl, _>(|obs, _| {
             if obs == 1 {
-                ControlFlow::Break(())
+                ControlFlow::Break(ControlExit::Stopped)
             } else {
                 ControlFlow::Continue((42, false))
             }
@@ -67,7 +68,7 @@ fn async_flow_break_can_terminate_first_cycle() {
     let mut robot = TestRobot::new();
     robot
         .control_with_flow_async::<TestControl, _>(async |_, _| -> ControlStep<u32> {
-            ControlFlow::Break(())
+            ControlFlow::Break(ControlExit::Stopped)
         })
         .unwrap();
     let trace = robot.trace.lock().unwrap();

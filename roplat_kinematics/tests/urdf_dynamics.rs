@@ -71,14 +71,18 @@ fn terms_match_the_closed_form() {
 /// Integrates the arm under `controller`'s torques with semi-implicit Euler.
 fn simulate(
     model: &UrdfDynamics<2>,
-    mut controller: impl FnMut(JointState<2>, Duration) -> ([f64; 2], bool),
+    mut controller: impl FnMut(JointState<2>, Duration) -> roplat_behavior::ControlStep<[f64; 2]>,
     q0: [f64; 2],
     seconds: f64,
 ) -> ([f64; 2], [f64; 2]) {
     let dt = 1e-3;
     let (mut q, mut dq) = (q0, [0.0; 2]);
     for _ in 0..(seconds / dt) as usize {
-        let (tau, _) = controller(state(q, dq), Duration::from_secs_f64(dt));
+        let std::ops::ControlFlow::Continue((tau, _)) =
+            controller(state(q, dq), Duration::from_secs_f64(dt))
+        else {
+            panic!("the controller ended the session");
+        };
         let ddq = model
             .model()
             .forward_dynamics(&q, &dq, &tau, [0.0, 0.0, -G])
@@ -104,7 +108,12 @@ fn gravity_compensation_holds_the_arm() {
     assert!(dq.iter().all(|v| v.abs() < 1e-6));
 
     // Without it the arm falls.
-    let (q, _) = simulate(&model, |_, _| ([0.0; 2], false), q0, 0.3);
+    let (q, _) = simulate(
+        &model,
+        |_, _| std::ops::ControlFlow::Continue(([0.0; 2], false)),
+        q0,
+        0.3,
+    );
     assert!((q[0] - q0[0]).abs() > 0.1, "{q:?}");
 }
 

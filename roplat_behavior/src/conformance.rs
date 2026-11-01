@@ -18,6 +18,7 @@ use std::{fmt, ops::ControlFlow, time::Duration};
 
 use roplat_msgs::{GripperCommand, Header, Imu};
 
+use crate::ControlExit;
 use crate::{
     ControlSpace, ControlWith, ForceTorqueSensor, Gripper, ImuSensor, Joints, RobotException,
 };
@@ -211,8 +212,9 @@ pub fn check_gripper<G: Gripper>(
 /// and every rate and torque bound positive. Needs no device.
 pub fn check_joints<T: Joints<N>, const N: usize>() -> Result<(), Violation> {
     const CHECK: &str = "joints";
+    let limits = T::JOINT_LIMITS;
     for i in 0..N {
-        let (min, max) = (T::JOINT_MIN[i], T::JOINT_MAX[i]);
+        let (min, max) = (limits.q_min[i], limits.q_max[i]);
         if min.is_nan() || max.is_nan() || min >= max {
             return Err(violation(
                 CHECK,
@@ -231,15 +233,18 @@ pub fn check_joints<T: Joints<N>, const N: usize>() -> Result<(), Violation> {
             }
         }
         let bounds = [
-            ("velocity", T::JOINT_VEL_BOUND[i]),
-            ("acceleration", T::JOINT_ACC_BOUND[i]),
-            ("jerk", T::JOINT_JERK_BOUND[i]),
-            ("torque", T::TORQUE_BOUND[i]),
-            ("torque rate", T::TORQUE_DOT_BOUND[i]),
+            ("dq_max", limits.dq_max[i]),
+            ("ddq_max", limits.ddq_max[i]),
+            ("dddq_max", limits.dddq_max[i]),
+            ("tau_max", limits.tau_max[i]),
+            ("dtau_max", limits.dtau_max[i]),
         ];
         for (what, bound) in bounds {
             if bound.is_nan() || bound <= 0.0 {
-                return Err(violation(CHECK, format!("joint {i}: {what} bound {bound}")));
+                return Err(violation(
+                    CHECK,
+                    format!("joint {i}: {what} {bound} is not positive"),
+                ));
             }
         }
     }
@@ -315,7 +320,7 @@ fn classify(durations: &[Duration]) -> DurationPattern {
 pub fn check_control_session<R, S>(robot: &mut R, cycles: usize) -> Result<SessionReport, Violation>
 where
     R: ControlWith<S>,
-    S: ControlSpace<R>,
+    S: ControlSpace,
 {
     assert!(cycles >= 3, "check_control_session needs at least 3 cycles");
     let mut calls = 0;
@@ -323,7 +328,7 @@ where
     let result = robot.control_with_flow(|obs, dt| {
         calls += 1;
         if calls > cycles {
-            return ControlFlow::Break(());
+            return ControlFlow::Break(ControlExit::Stopped);
         }
         durations.push(dt);
         ControlFlow::Continue((R::hold_command(&obs), calls == cycles))
@@ -346,7 +351,7 @@ where
     let result = robot.control_with_flow(|obs, _| {
         calls += 1;
         if calls >= cycles {
-            ControlFlow::Break(())
+            ControlFlow::Break(ControlExit::Stopped)
         } else {
             ControlFlow::Continue((R::hold_command(&obs), false))
         }
@@ -372,7 +377,7 @@ where
     let result = robot.control_with_flow(|obs, _| {
         calls += 1;
         if calls > 1 {
-            return ControlFlow::Break(());
+            return ControlFlow::Break(ControlExit::Stopped);
         }
         ControlFlow::Continue((R::hold_command(&obs), true))
     });

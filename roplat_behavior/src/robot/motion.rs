@@ -4,15 +4,16 @@ use serde::de::DeserializeOwned;
 
 use crate::{Arm, MotionLimits, Robot, RobotException, RobotResult};
 
-/// Type-level mapping from a motion *space* to the *target* it carries for a
-/// particular robot `R`.
+/// Type-level mapping from a motion *space* to the *value* a command in it
+/// carries.
 ///
-/// This trait has no methods: it only fixes [`MotionSpace::Target`]. For
-/// example `JointSpace` maps to the robot's joint vector, while `FlangeSpace`
-/// and `TcpSpace` map to an `Iso3` pose.
-pub trait MotionSpace<R: ?Sized> {
+/// This trait has no methods: it only fixes [`Space::Value`]. For example
+/// `JointSpace<N>` carries the joint vector `[f64; N]`, while `FlangeSpace`
+/// and `TcpSpace` carry a `Pose`. A space names one value type; a different
+/// value type is a different space.
+pub trait Space {
     /// The value type a command in this space carries.
-    type Target;
+    type Value;
 }
 
 /// Reach a single target in motion space `S`. **Implemented by drivers.**
@@ -21,10 +22,10 @@ pub trait MotionSpace<R: ?Sized> {
 /// spaces typically delegate down a funnel (`Tcp → Flange → Joint → hardware`),
 /// each hop applying its own linkage (tool offset, inverse kinematics, joint
 /// limits).
-pub trait MoveTo<S: MotionSpace<Self>>: Robot {
+pub trait MoveTo<S: Space>: Robot {
     /// Command the robot to reach `target`, returning when the motion has
     /// finished or failed.
-    fn move_to(&mut self, target: S::Target) -> RobotResult<()>;
+    fn move_to(&mut self, target: S::Value) -> RobotResult<()>;
 
     /// Asynchronous target motion. The returned future is inert until the
     /// caller polls or awaits it.
@@ -32,7 +33,7 @@ pub trait MoveTo<S: MotionSpace<Self>>: Robot {
     /// Drivers should implement this only when they have a real async backend.
     /// The default reports that async motion is not supported; it deliberately
     /// does not wrap the blocking [`MoveTo::move_to`] path.
-    fn move_to_async(&mut self, _target: S::Target) -> impl Future<Output = RobotResult<()>> {
+    fn move_to_async(&mut self, _target: S::Value) -> impl Future<Output = RobotResult<()>> {
         async {
             Err(RobotException::UnprocessableInstructionError(
                 "async target motion is not implemented for this driver".to_string(),
@@ -53,15 +54,14 @@ pub trait MoveTo<S: MotionSpace<Self>>: Robot {
 /// * [`MoveTraj::move_waypoints`] — *sparse* waypoints, interpolated into a
 ///   dense trajectory and forwarded to `move_traj`.
 ///
-/// Path sampling and waypoint interpolation are intentionally **left to the
-/// driver/user**: the default `move_path` / `move_waypoints` simply report that
-/// no planner is wired up. A driver opts in by overriding them and funnelling
-/// into its own `move_traj`.
-pub trait MoveTraj<S: MotionSpace<Self>>: Robot {
+/// Path sampling and waypoint interpolation are the driver's: `move_path` and
+/// `move_waypoints` are required, and a driver without a planner returns
+/// `NotSupported` from them. Both funnel into its own `move_traj`.
+pub trait MoveTraj<S: Space>: Robot {
     /// Follow a dense, already-sampled trajectory. The base primitive every
     /// other trajectory entry point reduces to.
-    fn move_traj(&mut self, traj: Vec<S::Target>) -> RobotResult<()>;
-    fn move_traj_sync(&mut self, traj: Vec<S::Target>) -> RobotResult<()> {
+    fn move_traj(&mut self, traj: Vec<S::Value>) -> RobotResult<()>;
+    fn move_traj_sync(&mut self, traj: Vec<S::Value>) -> RobotResult<()> {
         self.move_traj(traj)?;
         self.waiting_for_finish()
     }
@@ -70,18 +70,18 @@ pub trait MoveTraj<S: MotionSpace<Self>>: Robot {
     /// returning `None` past the end. Defaults to "no planner wired up".
     fn move_path<F>(&mut self, _path: F) -> RobotResult<()>
     where
-        F: Fn(f64) -> Option<S::Target>;
+        F: Fn(f64) -> Option<S::Value>;
     fn move_path_sync<F>(&mut self, path: F) -> RobotResult<()>
     where
-        F: Fn(f64) -> Option<S::Target>,
+        F: Fn(f64) -> Option<S::Value>,
     {
         self.move_path(path)?;
         self.waiting_for_finish()
     }
 
     /// Follow a sequence of sparse waypoints. Defaults to "no planner wired up".
-    fn move_waypoints(&mut self, _waypoints: Vec<S::Target>) -> RobotResult<()>;
-    fn move_waypoints_sync(&mut self, waypoints: Vec<S::Target>) -> RobotResult<()> {
+    fn move_waypoints(&mut self, _waypoints: Vec<S::Value>) -> RobotResult<()>;
+    fn move_waypoints_sync(&mut self, waypoints: Vec<S::Value>) -> RobotResult<()> {
         self.move_waypoints(waypoints)?;
         self.waiting_for_finish()
     }
@@ -101,45 +101,35 @@ pub trait MoveTraj<S: MotionSpace<Self>>: Robot {
 /// driver provides for that space.
 pub trait Motion: Sized {
     /// Reach `target` in space `S`. See [`MoveTo::move_to`].
-    fn move_to<S>(&mut self, target: S::Target) -> RobotResult<()>
+    fn move_to<S>(&mut self, target: S::Value) -> RobotResult<()>
     where
-        S: MotionSpace<Self>,
+        S: Space,
         Self: MoveTo<S>,
     {
         <Self as MoveTo<S>>::move_to(self, target)
     }
 
     /// Reach `target` in space `S` asynchronously. See [`MoveTo::move_to_async`].
-    fn move_to_async<S>(&mut self, target: S::Target) -> impl Future<Output = RobotResult<()>>
+    fn move_to_async<S>(&mut self, target: S::Value) -> impl Future<Output = RobotResult<()>>
     where
-        S: MotionSpace<Self>,
+        S: Space,
         Self: MoveTo<S>,
     {
         <Self as MoveTo<S>>::move_to_async(self, target)
     }
 
-    #[deprecated(note = "move_to is blocking; use move_to_async for a Future-returning API")]
-    #[allow(deprecated)]
-    fn move_to_sync<S>(&mut self, target: S::Target) -> RobotResult<()>
-    where
-        S: MotionSpace<Self>,
-        Self: MoveTo<S>,
-    {
-        <Self as MoveTo<S>>::move_to(self, target)
-    }
-
     /// Follow a dense trajectory in space `S`. See [`MoveTraj::move_traj`].
-    fn move_traj<S>(&mut self, traj: Vec<S::Target>) -> RobotResult<()>
+    fn move_traj<S>(&mut self, traj: Vec<S::Value>) -> RobotResult<()>
     where
-        S: MotionSpace<Self>,
+        S: Space,
         Self: MoveTraj<S>,
     {
         <Self as MoveTraj<S>>::move_traj(self, traj)
     }
     /// Follow a dense trajectory in space `S` and block. See [`MoveTraj::move_traj_sync`].
-    fn move_traj_sync<S>(&mut self, traj: Vec<S::Target>) -> RobotResult<()>
+    fn move_traj_sync<S>(&mut self, traj: Vec<S::Value>) -> RobotResult<()>
     where
-        S: MotionSpace<Self>,
+        S: Space,
         Self: MoveTraj<S>,
     {
         <Self as MoveTraj<S>>::move_traj_sync(self, traj)
@@ -148,33 +138,33 @@ pub trait Motion: Sized {
     /// Follow a continuous path in space `S`. See [`MoveTraj::move_path`].
     fn move_path<S, F>(&mut self, path: F) -> RobotResult<()>
     where
-        S: MotionSpace<Self>,
+        S: Space,
         Self: MoveTraj<S>,
-        F: Fn(f64) -> Option<S::Target>,
+        F: Fn(f64) -> Option<S::Value>,
     {
         <Self as MoveTraj<S>>::move_path(self, path)
     }
     /// Follow a continuous path in space `S` and block. See [`MoveTraj::move_path_sync`].
     fn move_path_sync<S, F>(&mut self, path: F) -> RobotResult<()>
     where
-        S: MotionSpace<Self>,
+        S: Space,
         Self: MoveTraj<S>,
-        F: Fn(f64) -> Option<S::Target>,
+        F: Fn(f64) -> Option<S::Value>,
     {
         <Self as MoveTraj<S>>::move_path_sync(self, path)
     }
 
     /// Follow sparse waypoints in space `S`. See [`MoveTraj::move_waypoints`].
-    fn move_waypoints<S>(&mut self, waypoints: Vec<S::Target>) -> RobotResult<()>
+    fn move_waypoints<S>(&mut self, waypoints: Vec<S::Value>) -> RobotResult<()>
     where
-        S: MotionSpace<Self>,
+        S: Space,
         Self: MoveTraj<S>,
     {
         <Self as MoveTraj<S>>::move_waypoints(self, waypoints)
     }
-    fn move_waypoints_sync<S>(&mut self, waypoints: Vec<S::Target>) -> RobotResult<()>
+    fn move_waypoints_sync<S>(&mut self, waypoints: Vec<S::Value>) -> RobotResult<()>
     where
-        S: MotionSpace<Self>,
+        S: Space,
         Self: MoveTraj<S>,
     {
         <Self as MoveTraj<S>>::move_waypoints_sync(self, waypoints)
@@ -209,22 +199,22 @@ impl<R> Motion for R {}
 pub trait MotionFile {
     fn move_traj_from_file<S>(&mut self, path: &str) -> RobotResult<()>
     where
-        S: MotionSpace<Self>,
+        S: Space,
         Self: MoveTraj<S>,
-        S::Target: DeserializeOwned,
+        S::Value: DeserializeOwned,
     {
         let file = std::fs::File::open(path)?;
-        let traj: Vec<S::Target> = serde_json::from_reader(file)?;
+        let traj: Vec<S::Value> = serde_json::from_reader(file)?;
         <Self as MoveTraj<S>>::move_traj(self, traj)
     }
     fn move_waypoints_from_file<S>(&mut self, path: &str) -> RobotResult<()>
     where
-        S: MotionSpace<Self>,
+        S: Space,
         Self: MoveTraj<S>,
-        S::Target: DeserializeOwned,
+        S::Value: DeserializeOwned,
     {
         let file = std::fs::File::open(path)?;
-        let wps: Vec<S::Target> = serde_json::from_reader(file)?;
+        let wps: Vec<S::Value> = serde_json::from_reader(file)?;
         <Self as MoveTraj<S>>::move_waypoints(self, wps)
     }
 }

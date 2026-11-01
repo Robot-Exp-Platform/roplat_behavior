@@ -47,18 +47,12 @@ fn model_error(error: DescriptionError) -> RobotException {
 }
 
 impl<const N: usize> SpaceMap<JointSpace<N>, FlangeSpace> for UrdfKinematics<N> {
-    type Input = [f64; N];
-    type Output = Pose;
-
     fn map(&self, q: [f64; N]) -> RobotResult<Pose> {
         self.chain.forward_kinematics(&q).map_err(model_error)
     }
 }
 
 impl<const N: usize> SpaceMap<JointSpace<N>, JacobianSpace<N>> for UrdfKinematics<N> {
-    type Input = [f64; N];
-    type Output = Jaco<N>;
-
     fn map(&self, q: [f64; N]) -> RobotResult<Jaco<N>> {
         let j = self.chain.jacobian(&q).map_err(model_error)?;
         Ok(na::SMatrix::<f64, 6, N>::from_fn(|r, c| j[(r, c)]))

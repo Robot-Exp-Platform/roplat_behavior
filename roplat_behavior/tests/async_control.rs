@@ -1,5 +1,6 @@
 //! Finite, device-free native-session tests. A single current-thread runtime
 //! polls the driver, its callback and sibling futures; no helper thread exists.
+use roplat_behavior::ControlExit;
 use roplat_behavior::{
     AsyncControl, AsyncControlCallback, AsyncControlWith, ControlSpace, ControlStep, Robot,
     RobotException, RobotResult,
@@ -36,7 +37,7 @@ impl Robot for AsyncRobot {
         Ok(())
     }
 }
-impl ControlSpace<AsyncRobot> for Channel {
+impl ControlSpace for Channel {
     type Obs = u32;
     type Command = u32;
 }
@@ -61,7 +62,7 @@ impl AsyncControlWith<Channel> for AsyncRobot {
                         continue;
                     }
                 }
-                ControlFlow::Break(()) => {}
+                ControlFlow::Break(_) => {}
             }
             self.trace.lock().unwrap().events.push("exit-start");
             tokio::task::yield_now().await;
@@ -131,7 +132,7 @@ async fn ordinary_future_closure_can_borrow_state_before_building_its_future() {
 async fn break_sends_no_command_and_awaits_device_termination() {
     let mut robot = AsyncRobot::new();
     AsyncControl::control_native_async::<Channel, _>(&mut robot, &mut |_, _| async {
-        ControlFlow::Break(())
+        ControlFlow::Break(ControlExit::Stopped)
     })
     .await
     .unwrap();
@@ -160,10 +161,10 @@ mod rhythm {
     type TestRhythm = AsyncControlRhythm<AsyncRobot, Channel>;
     struct NonCloneState(i32);
     fn session_error(error: &RoplatError) -> &ControlSessionError {
-        let RoplatError::Io(error) = error else {
+        let RoplatError::Node(error) = error else {
             panic!("{error:?}")
         };
-        error.get_ref().unwrap().downcast_ref().unwrap()
+        error.downcast_ref().unwrap()
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -270,7 +271,7 @@ mod rhythm {
                     |mut n, _, _| async move {
                         tokio::task::yield_now().await;
                         *n += 1;
-                        (Err(RoplatError::NodeProcessing("domain failed".into())), n)
+                        (Err(RoplatError::Node("domain failed".into())), n)
                     },
                     (),
                     (&mut robot,),
@@ -281,14 +282,14 @@ mod rhythm {
             if fail_exit {
                 let failure = session_error(&error);
                 assert!(
-                    matches!(failure.device, RobotException::CommandException(ref message) if message == "exit failed")
+                    matches!(failure.device, RobotException::CommandException(ref message) if message.to_string() == "exit failed")
                 );
                 assert!(
-                    matches!(&failure.domain, Some(ControlDomainExit::Failed(RoplatError::NodeProcessing(message))) if message == "domain failed")
+                    matches!(&failure.domain, Some(ControlDomainExit::Failed(RoplatError::Node(message))) if message.to_string() == "domain failed")
                 );
             } else {
                 assert!(
-                    matches!(error, RoplatError::NodeProcessing(ref message) if message == "domain failed")
+                    matches!(error, RoplatError::Node(ref message) if message.to_string() == "domain failed")
                 );
             }
             assert_eq!(*nodes, 8);
@@ -426,10 +427,7 @@ mod rhythm {
             let (execution, nodes) = domain(nodes, input, context.clone()).await;
             if self.fail {
                 context.request_stop();
-                (
-                    Err(RoplatError::NodeProcessing("nested domain failed".into())),
-                    nodes,
-                )
+                (Err(RoplatError::Node("nested domain failed".into())), nodes)
             } else {
                 (execution, nodes)
             }
@@ -529,7 +527,7 @@ mod rhythm {
         .await
         .unwrap();
         assert!(
-            matches!(outcome, Err(RoplatError::NodeProcessing(ref message)) if message == "nested domain failed")
+            matches!(outcome, Err(RoplatError::Node(ref message)) if message.to_string() == "nested domain failed")
         );
         assert!(child.fail);
         assert_eq!(controller.calls, 1);

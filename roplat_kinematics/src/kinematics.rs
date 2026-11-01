@@ -385,7 +385,7 @@ pub trait ArmInverseKinematics<const N: usize>: ArmForwardKinematics<N> + Joints
         })
     }
 
-    // 计算 task 残差 e 和（可选）J；默认几何位姿误差 + 几何雅可比
+    // The task residual e and, optionally, J: by default the geometric pose error and the geometric Jacobian.
     /// Compute the task-space error twist `e` (and geometric Jacobian) between
     /// the current pose at `q` and `target`. Default uses a geometric pose
     /// error in the base frame plus the geometric Jacobian.
@@ -404,7 +404,7 @@ pub trait ArmInverseKinematics<const N: usize>: ArmForwardKinematics<N> + Joints
         (e, flange_jacobian(&k, &Self::FLANGE))
     }
 
-    // ========== 单步迭代器（按方法）==========
+    // ---------- One iteration step, per method ----------
     /// Perform a single IK update of `q` toward `target` using `method`,
     /// returning the next joint vector clamped into the arm's joint limits.
     fn ik_step(q: &JVec<N>, target: &Pose, method: &IKMethod) -> JVec<N>
@@ -429,17 +429,17 @@ pub trait ArmInverseKinematics<const N: usize>: ArmForwardKinematics<N> + Joints
                         .unwrap();
                 let mut dq = pinv * e;
                 clip_step(&mut dq, stop.step_clip);
-                project_to_limits(q + dq, Self::JOINT_MIN, Self::JOINT_MAX)
+                project_to_limits(q + dq, Self::JOINT_LIMITS.q_min, Self::JOINT_LIMITS.q_max)
             }
             IKMethod::JT { gain, stop } => {
                 let (e, j) = Self::task_error_and_jacobian(q, target);
                 let mut dq = j.transpose() * e * *gain;
                 clip_step(&mut dq, stop.step_clip);
-                project_to_limits(q + dq, Self::JOINT_MIN, Self::JOINT_MAX)
+                project_to_limits(q + dq, Self::JOINT_LIMITS.q_min, Self::JOINT_LIMITS.q_max)
             }
             IKMethod::Newton { stop } => {
                 let (e, j) = Self::task_error_and_jacobian(q, target);
-                // 伪逆牛顿：Δq = J^+ e
+                // Pseudo-inverse Newton: Δq = J^+ e
                 // SMatrix::as_slice() is column-major, so we MUST use
                 // from_column_slice; the previous from_row_slice produced J^T.
                 let j_dyn = na::DMatrix::from_column_slice(6, N, j.as_slice());
@@ -447,33 +447,33 @@ pub trait ArmInverseKinematics<const N: usize>: ArmForwardKinematics<N> + Joints
                 let pinv = na::SMatrix::<f64, N, 6>::from_column_slice(pinv.as_slice());
                 let mut dq = pinv * e;
                 clip_step(&mut dq, stop.step_clip);
-                project_to_limits(q + dq, Self::JOINT_MIN, Self::JOINT_MAX)
+                project_to_limits(q + dq, Self::JOINT_LIMITS.q_min, Self::JOINT_LIMITS.q_max)
             }
             IKMethod::LM { lambda0, stop } => {
-                // 经典 LM：Δq = (JᵀJ + λ I)^{-1} Jᵀ e
+                // Classic Levenberg-Marquardt: Δq = (JᵀJ + λ I)^{-1} Jᵀ e
                 let (e, j) = Self::task_error_and_jacobian(q, target);
                 let jt = j.transpose();
                 let h = jt * j + na::SMatrix::<f64, N, N>::identity() * (*lambda0);
                 let mut dq = h.lu().solve(&(jt * e)).unwrap_or(JVec::<N>::zeros());
                 clip_step(&mut dq, stop.step_clip);
-                project_to_limits(q + dq, Self::JOINT_MIN, Self::JOINT_MAX)
+                project_to_limits(q + dq, Self::JOINT_LIMITS.q_min, Self::JOINT_LIMITS.q_max)
             }
         }
     }
 
-    // ========== 顶层：迭代求解（位姿 IK）==========
+    // ---------- Top level: iterative pose IK ----------
     fn ik_solve(q0: &JVec<N>, target: &Pose, method: IKMethod) -> JVec<N>
     where
         na::Const<N>: na::DimMin<na::Const<N>, Output = na::Const<N>> + na::ToTypenum,
     {
-        // 优先解析（当 method=Analytic 且支持时）
+        // Prefer the analytic solution when the method is Analytic and the arm supports it.
         if let IKMethod::Analytic { .. } = method
             && Self::ANALYTIC_FAMILY.is_some()
             && let Some(sol) = Self::ik_analytic_best(q0, target)
         {
             return sol;
         }
-        // 迭代
+        // Iterate.
         let stop = method.stop();
 
         let mut q = *q0;
@@ -483,7 +483,7 @@ pub trait ArmInverseKinematics<const N: usize>: ArmForwardKinematics<N> + Joints
                 break;
             }
             q = qn;
-            // 简单收敛终止（位姿误差门限）
+            // Simple convergence test: a pose-error threshold.
             let (e, _) = Self::task_error_and_jacobian(&q, target);
             let pos_ok = e.fixed_rows::<3>(0).norm() < stop.pos_tol;
             let rot_ok = e.fixed_rows::<3>(3).norm() < stop.rot_tol;

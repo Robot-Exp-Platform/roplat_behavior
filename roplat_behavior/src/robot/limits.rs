@@ -1,32 +1,13 @@
 //! Motion limits as data: what a robot declares and what its motions use.
 //!
-//! A driver declares its envelope at compile time through [`Joints`] and
-//! [`EndPoint`]; [`Joints::joint_limits`] and [`EndPoint::cartesian_limits`]
-//! turn those constants into [`JointLimits`] and [`CartesianLimits`], the form
-//! algorithms and safety checks take. An unbounded entry is `f64::INFINITY`
-//! (`f64::NEG_INFINITY` for a lower position bound); a declared `±f64::MAX`
-//! reads as unbounded. [`MotionLimits`] is what an [`Arm`](crate::Arm) applies
-//! to the motions it plans itself.
+//! A driver declares its envelope at compile time as data:
+//! [`Joints::JOINT_LIMITS`] and [`EndPoint::CARTESIAN_LIMITS`] are the
+//! [`JointLimits`] and [`CartesianLimits`] algorithms and safety checks take.
+//! An unbounded entry is `f64::INFINITY` (`f64::NEG_INFINITY` for a lower
+//! position bound). [`MotionLimits`] is what an [`Arm`](crate::Arm) applies to
+//! the motions it plans itself.
 
 use crate::{CartesianLimits, EndPoint, JointLimits, Joints, RobotException, RobotResult};
-
-/// `f64::MAX` and above read as unbounded.
-pub(crate) const fn unbounded_above(bound: f64) -> f64 {
-    if bound >= f64::MAX {
-        f64::INFINITY
-    } else {
-        bound
-    }
-}
-
-/// `-f64::MAX` and below read as unbounded.
-pub(crate) const fn unbounded_below(bound: f64) -> f64 {
-    if bound <= -f64::MAX {
-        f64::NEG_INFINITY
-    } else {
-        bound
-    }
-}
 
 /// Limits and speed fraction an arm's own planned motions
 /// ([`MoveTo`](crate::MoveTo), [`MoveTraj`](crate::MoveTraj)) respect.
@@ -47,8 +28,8 @@ impl<const N: usize> MotionLimits<N> {
     /// The envelope `R` declares, at full speed.
     pub fn envelope<R: Joints<N> + EndPoint + ?Sized>() -> Self {
         Self {
-            joint: R::joint_limits(),
-            cartesian: R::cartesian_limits(),
+            joint: R::JOINT_LIMITS,
+            cartesian: R::CARTESIAN_LIMITS,
             scale: 1.0,
         }
     }
@@ -75,12 +56,12 @@ impl<const N: usize> MotionLimits<N> {
     pub fn scaled_cartesian(&self) -> CartesianLimits {
         let c = &self.cartesian;
         CartesianLimits {
-            linear_velocity: c.linear_velocity * self.scale,
-            linear_acceleration: c.linear_acceleration * self.scale,
-            linear_jerk: c.linear_jerk * self.scale,
-            angular_velocity: c.angular_velocity * self.scale,
-            angular_acceleration: c.angular_acceleration * self.scale,
-            angular_jerk: c.angular_jerk * self.scale,
+            linear_velocity_max: c.linear_velocity_max * self.scale,
+            linear_acceleration_max: c.linear_acceleration_max * self.scale,
+            linear_jerk_max: c.linear_jerk_max * self.scale,
+            angular_velocity_max: c.angular_velocity_max * self.scale,
+            angular_acceleration_max: c.angular_acceleration_max * self.scale,
+            angular_jerk_max: c.angular_jerk_max * self.scale,
         }
     }
 
@@ -111,20 +92,28 @@ impl<const N: usize> MotionLimits<N> {
         }
         let (c, e) = (&self.cartesian, &envelope.cartesian);
         for (what, bound, declared) in [
-            ("linear_velocity", c.linear_velocity, e.linear_velocity),
             (
-                "linear_acceleration",
-                c.linear_acceleration,
-                e.linear_acceleration,
+                "linear_velocity_max",
+                c.linear_velocity_max,
+                e.linear_velocity_max,
             ),
-            ("linear_jerk", c.linear_jerk, e.linear_jerk),
-            ("angular_velocity", c.angular_velocity, e.angular_velocity),
             (
-                "angular_acceleration",
-                c.angular_acceleration,
-                e.angular_acceleration,
+                "linear_acceleration_max",
+                c.linear_acceleration_max,
+                e.linear_acceleration_max,
             ),
-            ("angular_jerk", c.angular_jerk, e.angular_jerk),
+            ("linear_jerk_max", c.linear_jerk_max, e.linear_jerk_max),
+            (
+                "angular_velocity_max",
+                c.angular_velocity_max,
+                e.angular_velocity_max,
+            ),
+            (
+                "angular_acceleration_max",
+                c.angular_acceleration_max,
+                e.angular_acceleration_max,
+            ),
+            ("angular_jerk_max", c.angular_jerk_max, e.angular_jerk_max),
         ] {
             tightens(what, bound, declared)?;
         }

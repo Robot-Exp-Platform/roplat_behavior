@@ -1,63 +1,38 @@
-use super::limits::{unbounded_above, unbounded_below};
 use crate::JointLimits;
 
-/// A robot with a fixed number `N` of actuated joints, together with the
-/// compile-time kinematic and dynamic limits of those joints.
+/// A robot with a fixed number `N` of actuated joints, and the envelope of
+/// those joints declared at compile time.
 ///
-/// The constants describe the physical envelope of one specific robot model.
-/// Every value is a per-joint array of length `N`; angles are in radians,
-/// velocities in rad/s, accelerations in rad/s^2, jerk in rad/s^3 and torques
-/// in N*m. Only [`JOINT_MIN`](Joints::JOINT_MIN) and
-/// [`JOINT_MAX`](Joints::JOINT_MAX) are required; the remaining limits default
-/// to unbounded, `f64::INFINITY`, so a driver only declares what its firmware
-/// actually enforces. A declared `f64::MAX` also reads as unbounded.
+/// [`JOINT_LIMITS`](Joints::JOINT_LIMITS) is the model's envelope as data, the
+/// form algorithms and safety checks take: positions in radians, velocities in
+/// rad/s, accelerations in rad/s^2, jerk in rad/s^3, efforts in N*m. A driver
+/// declares the position limits and the bounds its firmware enforces; every
+/// other bound stays unbounded (`f64::INFINITY`).
 ///
-/// Implementing `Joints<N>` makes [`JointSpace<N>`](crate::JointSpace) a valid
-/// [`MotionSpace`](crate::MotionSpace) for the robot, and it is a super-trait of
-/// [`Arm<N>`](crate::Arm).
+/// `Joints<N>` is a super-trait of [`Arm<N>`](crate::Arm).
 ///
 /// # Example
 /// ```ignore
-/// use roplat_behavior::{Joints, to_radians_array};
+/// use roplat_behavior::{JointLimits, Joints, to_radians_array};
 ///
 /// impl Joints<6> for MyArm {
-///     const JOINT_MIN: [f64; 6] = to_radians_array([-170., -120., -170., -120., -170., -360.]);
-///     const JOINT_MAX: [f64; 6] = to_radians_array([ 170.,  120.,  170.,  120.,  170.,  360.]);
-///     const JOINT_VEL_BOUND: [f64; 6] = [3.14; 6];
+///     const JOINT_LIMITS: JointLimits<6> = JointLimits {
+///         dq_max: [3.14; 6],
+///         ..JointLimits::positions(
+///             to_radians_array([-170., -120., -170., -120., -170., -360.]),
+///             to_radians_array([170., 120., 170., 120., 170., 360.]),
+///         )
+///     };
 /// }
 /// ```
 pub trait Joints<const N: usize> {
-    /// The arm's home / reference posture (rad). Defaults to all-zeros.
+    /// The arm's home / reference posture (rad), the seed of inverse
+    /// kinematics. Defaults to all-zeros.
     const JOINT_DEFAULT: [f64; N] = [0.; N];
-    /// A compact "packed" posture for transport or storage (rad). Defaults to
-    /// all-zeros.
+    /// A compact "packed" posture for transport or storage (rad). Declared for
+    /// the caller: an application moves the arm here before shipping or
+    /// storing it; the library itself never reads it. Defaults to all-zeros.
     const JOINT_PACKED: [f64; N] = [0.; N];
-    /// Lower joint position limits (rad). Required.
-    const JOINT_MIN: [f64; N];
-    /// Upper joint position limits (rad). Required.
-    const JOINT_MAX: [f64; N];
-    /// Maximum joint velocities (rad/s). Defaults to unbounded.
-    const JOINT_VEL_BOUND: [f64; N] = [f64::INFINITY; N];
-    /// Maximum joint accelerations (rad/s^2). Defaults to unbounded.
-    const JOINT_ACC_BOUND: [f64; N] = [f64::INFINITY; N];
-    /// Maximum joint jerk (rad/s^3). Defaults to unbounded.
-    const JOINT_JERK_BOUND: [f64; N] = [f64::INFINITY; N];
-    /// Maximum joint torques (N*m). Defaults to unbounded.
-    const TORQUE_BOUND: [f64; N] = [f64::INFINITY; N];
-    /// Maximum joint torque rate (N*m/s). Defaults to unbounded.
-    const TORQUE_DOT_BOUND: [f64; N] = [f64::INFINITY; N];
-
-    /// The declared envelope as data, the form algorithms and safety checks
-    /// take. A bound at or beyond `±f64::MAX` reads as unbounded (`±f64::INFINITY`).
-    fn joint_limits() -> JointLimits<N> {
-        JointLimits {
-            q_min: Self::JOINT_MIN.map(unbounded_below),
-            q_max: Self::JOINT_MAX.map(unbounded_above),
-            dq_max: Self::JOINT_VEL_BOUND.map(unbounded_above),
-            ddq_max: Self::JOINT_ACC_BOUND.map(unbounded_above),
-            dddq_max: Self::JOINT_JERK_BOUND.map(unbounded_above),
-            tau_max: Self::TORQUE_BOUND.map(unbounded_above),
-            dtau_max: Self::TORQUE_DOT_BOUND.map(unbounded_above),
-        }
-    }
+    /// The joint envelope of this model. Required.
+    const JOINT_LIMITS: JointLimits<N>;
 }
