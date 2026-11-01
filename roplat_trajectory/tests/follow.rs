@@ -1,6 +1,7 @@
 //! The follower against a manual clock: what it commands, when it is done and
 //! when it refuses.
 
+use roplat_behavior::JointLimits;
 use std::{
     sync::{
         Arc,
@@ -273,18 +274,19 @@ impl Robot for TwoJoints {
 }
 
 impl Joints<2> for TwoJoints {
-    const JOINT_MIN: [f64; 2] = [-3.; 2];
-    const JOINT_MAX: [f64; 2] = [3.; 2];
-    const JOINT_VEL_BOUND: [f64; 2] = [1.; 2];
-    const JOINT_ACC_BOUND: [f64; 2] = [4.; 2];
-    const JOINT_JERK_BOUND: [f64; 2] = [40.; 2];
+    const JOINT_LIMITS: JointLimits<2> = JointLimits {
+        dq_max: [1.; 2],
+        ddq_max: [4.; 2],
+        dddq_max: [40.; 2],
+        ..JointLimits::positions([-3.; 2], [3.; 2])
+    };
 }
 
 #[test]
 fn a_copp_plan_plays_back_sample_for_sample() {
     let period = ms(1);
     let plan =
-        plan_waypoints_traj_via_copp(&[[0., 0.], [0.5, -0.3]], &TwoJoints::joint_limits(), period)
+        plan_waypoints_traj_via_copp(&[[0., 0.], [0.5, -0.3]], &TwoJoints::JOINT_LIMITS, period)
             .unwrap();
     let clock = Arc::new(ManualClock::simulation());
     let points = points_from_samples(&plan, period);
@@ -309,7 +311,7 @@ fn a_copp_plan_plays_back_sample_for_sample() {
 fn a_cycle_timed_follower_keeps_time_when_cycles_are_late() {
     let period = ms(1);
     let plan =
-        plan_waypoints_traj_via_copp(&[[0., 0.], [0.5, -0.3]], &TwoJoints::joint_limits(), period)
+        plan_waypoints_traj_via_copp(&[[0., 0.], [0.5, -0.3]], &TwoJoints::JOINT_LIMITS, period)
             .unwrap();
     let mut follower =
         JointTrajectoryFollower::cycle_timed(points_from_samples(&plan, period)).unwrap();

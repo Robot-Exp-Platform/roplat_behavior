@@ -116,7 +116,7 @@ fn twist_array(q: [f64; 6], dq: [f64; 6]) -> [f64; 6] {
 
 /// Runs a position controller on an ideal device for `cycles` of `dt`.
 fn run(
-    control: &mut impl FnMut(JointState<6>, Duration) -> std::ops::ControlFlow<(), ([f64; 6], bool)>,
+    control: &mut impl FnMut(JointState<6>, Duration) -> roplat_behavior::ControlStep<[f64; 6]>,
     mut q: [f64; 6],
     cycles: usize,
     dt: Duration,

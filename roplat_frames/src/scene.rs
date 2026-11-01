@@ -58,7 +58,10 @@ pub fn place_objects<const N: usize>(
 /// Adds `points`, measured in `camera`'s frame at `at`, as the object `name`
 /// of voxels with edge `voxel` (see [`PlanningScene::add_points`]), placed
 /// where `camera` was in `world` at `at`. Returns the number of voxels.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "frame buffer, scene, object name, points, voxel size, world and camera frames and the time are the independent inputs of one scene update"
+)]
 pub fn add_sensed_points<const N: usize>(
     buffer: &FrameBuffer,
     scene: &mut PlanningScene<N>,

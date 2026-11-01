@@ -97,7 +97,7 @@ impl MockArm {
                         continue;
                     }
                 }
-                ControlFlow::Break(()) => self.trace.lock().unwrap().breaks += 1,
+                ControlFlow::Break(_) => self.trace.lock().unwrap().breaks += 1,
             }
             self.trace.lock().unwrap().exits += 1;
             return Ok(());

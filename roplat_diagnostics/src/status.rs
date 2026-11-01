@@ -69,6 +69,7 @@ impl fmt::Display for Status {
 
 /// Named status sources polled together, the role of `diagnostic_updater`.
 pub struct Updater<'a> {
+    // dyn(c): status sources of different types are kept in one list.
     sources: Vec<(String, Box<dyn FnMut() -> Status + Send + 'a>)>,
 }
 

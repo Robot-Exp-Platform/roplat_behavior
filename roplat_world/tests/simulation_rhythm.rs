@@ -122,16 +122,10 @@ async fn engine_error_prevents_downstream_tick_and_retains_source() {
         7,
     )
     .await;
-    let Err(RoplatError::Io(error)) = result else {
+    let Err(RoplatError::Node(error)) = result else {
         panic!("expected preserved native error");
     };
-    assert!(
-        error
-            .get_ref()
-            .unwrap()
-            .downcast_ref::<InjectedError>()
-            .is_some()
-    );
+    assert!(error.downcast_ref::<InjectedError>().is_some());
     assert_eq!(counts.attempts.load(Ordering::SeqCst), 3);
     assert_eq!(counts.integrations.load(Ordering::SeqCst), 2);
     assert_eq!(counts.observations.load(Ordering::SeqCst), 2);
@@ -275,14 +269,14 @@ async fn downstream_error_preserves_owned_state_and_stops_context() {
             vec![1],
             |mut owned, (), _| async move {
                 owned.push(2);
-                (Err(RoplatError::Resource("observer failed".into())), owned)
+                (Err(RoplatError::Node("observer failed".into())), owned)
             },
             (),
             (),
             context.clone(),
         )
         .await;
-    assert!(matches!(result, Err(RoplatError::Resource(_))));
+    assert!(matches!(result, Err(RoplatError::Node(_))));
     assert_eq!(owned, [1, 2]);
     assert_eq!(rhythm.steps_completed(), 1);
     assert!(context.is_stopping());

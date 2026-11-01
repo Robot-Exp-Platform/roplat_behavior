@@ -1,14 +1,17 @@
+use std::ops::ControlFlow::{Break, Continue};
 use std::time::Duration;
 
-use crate::target::constant_joint_target_fn;
-use roplat_behavior::{BaseState, JointState};
+use roplat_behavior::{BaseState, ControlStep, JointState};
+
+use crate::exit::missing;
+use crate::target::{EmptyTrajectory, constant_joint_target_fn};
 
 /// Builds a joint-space PD torque controller toward one fixed joint target.
 ///
 /// The returned closure observes [`JointState<N>`] and returns a torque-like
-/// `[f64; N]` command plus a completion flag. It is suitable for
-/// `TorqueControl<N>` or `TorqueControl<N>` when the driver interprets
-/// the command as joint effort.
+/// `[f64; N]` command plus a completion flag, for `TorqueControl<N>` when the
+/// driver interprets the command as joint effort. The session ends with
+/// `Break` when the state lacks measured joint positions or velocities.
 ///
 /// For motion to a fixed position through the driver's own position servo,
 /// prefer `MoveTo<JointSpace<N>>`; this helper is for realtime torque / force
@@ -17,7 +20,7 @@ pub fn joint_pd_control<const N: usize>(
     target: [f64; N],
     kp: [f64; N],
     kd: [f64; N],
-) -> impl FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static {
+) -> impl FnMut(JointState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static {
     joint_pd_tracking_control(constant_joint_target_fn(target), kp, kd)
 }
 
@@ -35,26 +38,30 @@ pub fn joint_pd_tracking_control<F, const N: usize>(
     mut target_fn: F,
     kp: [f64; N],
     kd: [f64; N],
-) -> impl FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static
+) -> impl FnMut(JointState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static
 where
     F: FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static,
 {
     move |state, duration| {
         let (target, done) = target_fn(state, duration);
-        let q = state.meas.q().unwrap_or(target);
-        let dq = state.meas.dq().unwrap_or([0.0; N]);
+        let Some(q) = state.meas.q() else {
+            return Break(missing("joint positions"));
+        };
+        let Some(dq) = state.meas.dq() else {
+            return Break(missing("joint velocities"));
+        };
         let mut torque = [0.0; N];
 
         for i in 0..N {
             torque[i] = kp[i] * (target[i] - q[i]) - kd[i] * dq[i];
         }
 
-        (torque, done)
+        Continue((torque, done))
     }
 }
 
 /// Builds a joint-space PD controller that follows an already sampled
-/// trajectory.
+/// trajectory. An empty trajectory is refused at construction.
 ///
 /// Each non-zero-duration tick advances by one sample. The reference velocity
 /// is estimated by finite-differencing the current and next trajectory sample,
@@ -63,23 +70,26 @@ pub fn joint_traj_pd_control<const N: usize>(
     traj: Vec<[f64; N]>,
     kp: [f64; N],
     kd: [f64; N],
-) -> impl FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static {
+) -> Result<
+    impl FnMut(JointState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static,
+    EmptyTrajectory,
+> {
+    if traj.is_empty() {
+        return Err(EmptyTrajectory);
+    }
     let mut step = 0usize;
 
-    move |state, duration| {
-        if traj.is_empty() {
-            return ([0.0; N], true);
-        }
-        if duration == Duration::ZERO && step == 0 {
-            return ([0.0; N], false);
-        }
-
+    Ok(move |state: JointState<N>, duration: Duration| {
         let last = traj.len() - 1;
         let index = step.min(last);
         let q_ref = traj[index];
         let q_next = traj[(index + 1).min(last)];
-        let q = state.meas.q().unwrap_or(q_ref);
-        let dq = state.meas.dq().unwrap_or([0.0; N]);
+        let Some(q) = state.meas.q() else {
+            return Break(missing("joint positions"));
+        };
+        let Some(dq) = state.meas.dq() else {
+            return Break(missing("joint velocities"));
+        };
 
         let dt = duration.as_secs_f64();
         let mut dq_ref = [0.0; N];
@@ -98,8 +108,8 @@ pub fn joint_traj_pd_control<const N: usize>(
             step += 1;
         }
 
-        (torque, step >= traj.len())
-    }
+        Continue((torque, step >= traj.len()))
+    })
 }
 
 /// Builds a joint-space PID torque controller toward one fixed joint target.
@@ -113,7 +123,7 @@ pub fn joint_pid_control<const N: usize>(
     kp: [f64; N],
     ki: [f64; N],
     kd: [f64; N],
-) -> impl FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static {
+) -> impl FnMut(JointState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static {
     joint_pid_tracking_control(constant_joint_target_fn(target), kp, ki, kd)
 }
 
@@ -131,7 +141,7 @@ pub fn joint_pid_tracking_control<F, const N: usize>(
     kp: [f64; N],
     ki: [f64; N],
     kd: [f64; N],
-) -> impl FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static
+) -> impl FnMut(JointState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static
 where
     F: FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static,
 {
@@ -139,8 +149,12 @@ where
 
     move |state, duration| {
         let (target, done) = target_fn(state, duration);
-        let q = state.meas.q().unwrap_or(target);
-        let dq = state.meas.dq().unwrap_or([0.0; N]);
+        let Some(q) = state.meas.q() else {
+            return Break(missing("joint positions"));
+        };
+        let Some(dq) = state.meas.dq() else {
+            return Break(missing("joint velocities"));
+        };
         let dt = duration.as_secs_f64();
         let mut torque = [0.0; N];
 
@@ -150,11 +164,12 @@ where
             torque[i] = kp[i] * error + ki[i] * integral[i] - kd[i] * dq[i];
         }
 
-        (torque, done)
+        Continue((torque, done))
     }
 }
 
-/// Builds a joint-space PID controller for an already sampled trajectory.
+/// Builds a joint-space PID controller for an already sampled trajectory. An
+/// empty trajectory is refused at construction.
 ///
 /// The controller consumes one trajectory sample per non-zero-duration tick and
 /// estimates `dq_ref` from adjacent samples. This is the trajectory variant to
@@ -165,24 +180,27 @@ pub fn joint_traj_pid_control<const N: usize>(
     kp: [f64; N],
     ki: [f64; N],
     kd: [f64; N],
-) -> impl FnMut(JointState<N>, Duration) -> ([f64; N], bool) + Send + 'static {
+) -> Result<
+    impl FnMut(JointState<N>, Duration) -> ControlStep<[f64; N]> + Send + 'static,
+    EmptyTrajectory,
+> {
+    if traj.is_empty() {
+        return Err(EmptyTrajectory);
+    }
     let mut step = 0usize;
     let mut integral = [0.0; N];
 
-    move |state, duration| {
-        if traj.is_empty() {
-            return ([0.0; N], true);
-        }
-        if duration == Duration::ZERO && step == 0 {
-            return ([0.0; N], false);
-        }
-
+    Ok(move |state: JointState<N>, duration: Duration| {
         let last = traj.len() - 1;
         let index = step.min(last);
         let q_ref = traj[index];
         let q_next = traj[(index + 1).min(last)];
-        let q = state.meas.q().unwrap_or(q_ref);
-        let dq = state.meas.dq().unwrap_or([0.0; N]);
+        let Some(q) = state.meas.q() else {
+            return Break(missing("joint positions"));
+        };
+        let Some(dq) = state.meas.dq() else {
+            return Break(missing("joint velocities"));
+        };
 
         let dt = duration.as_secs_f64();
         let mut dq_ref = [0.0; N];
@@ -203,21 +221,22 @@ pub fn joint_traj_pid_control<const N: usize>(
             step += 1;
         }
 
-        (torque, step >= traj.len())
-    }
+        Continue((torque, step >= traj.len()))
+    })
 }
 
 /// Builds a PID controller for base spatial velocity.
 ///
 /// The observed state is [`BaseState`], and the command is a six-dimensional
 /// spatial velocity-like vector `[vx, vy, vz, wx, wy, wz]`. Use this with
-/// `BaseVelocityControl` for mobile bases or floating-base abstractions.
+/// `BaseVelocityControl` for mobile bases or floating-base abstractions. The
+/// session ends with `Break` when the state lacks a measured twist.
 pub fn base_velocity_pid_control(
     target: [f64; 6],
     kp: [f64; 6],
     ki: [f64; 6],
     kd: [f64; 6],
-) -> impl FnMut(BaseState, Duration) -> ([f64; 6], bool) + Send + 'static {
+) -> impl FnMut(BaseState, Duration) -> ControlStep<[f64; 6]> + Send + 'static {
     base_velocity_pid_tracking_control(move |_state, _duration| (target, false), kp, ki, kd)
 }
 
@@ -231,7 +250,7 @@ pub fn base_velocity_pid_tracking_control<F>(
     kp: [f64; 6],
     ki: [f64; 6],
     kd: [f64; 6],
-) -> impl FnMut(BaseState, Duration) -> ([f64; 6], bool) + Send + 'static
+) -> impl FnMut(BaseState, Duration) -> ControlStep<[f64; 6]> + Send + 'static
 where
     F: FnMut(BaseState, Duration) -> ([f64; 6], bool) + Send + 'static,
 {
@@ -240,7 +259,10 @@ where
 
     move |state, duration| {
         let (target, done) = target_fn(state, duration);
-        let velocity = state.meas.twist().map(<[f64; 6]>::from).unwrap_or([0.0; 6]);
+        let Some(twist) = state.meas.twist() else {
+            return Break(missing("base twist"));
+        };
+        let velocity = <[f64; 6]>::from(twist);
         let dt = duration.as_secs_f64();
         let mut command = [0.0; 6];
 
@@ -256,6 +278,6 @@ where
             last_error[i] = error;
         }
 
-        (command, done)
+        Continue((command, done))
     }
 }

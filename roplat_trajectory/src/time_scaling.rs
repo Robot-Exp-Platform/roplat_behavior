@@ -14,7 +14,7 @@ use std::{fmt::Display, time::Duration};
 use nalgebra as na;
 use roplat_msgs::{CartesianLimits, JointLimits, Pose};
 
-use crate::path_generate::joint_s_curve;
+use crate::path_generate::ScalarSCurveProfile;
 
 /// Number of `s` samples used to discretise the geometric path for copp.
 pub const COPP_PATH_SAMPLES: usize = 1001;
@@ -83,9 +83,12 @@ impl PathBounds {
             by_distance.min(by_angle)
         };
         Self {
-            velocity: bound(limits.linear_velocity, limits.angular_velocity),
-            acceleration: bound(limits.linear_acceleration, limits.angular_acceleration),
-            jerk: bound(limits.linear_jerk, limits.angular_jerk),
+            velocity: bound(limits.linear_velocity_max, limits.angular_velocity_max),
+            acceleration: bound(
+                limits.linear_acceleration_max,
+                limits.angular_acceleration_max,
+            ),
+            jerk: bound(limits.linear_jerk_max, limits.angular_jerk_max),
         }
     }
 
@@ -413,8 +416,10 @@ where
     let mut last = String::new();
 
     for _attempt in 0..=options.max_retries {
-        let (s_curve, total) = joint_s_curve::<1>(&[0.0], &[1.0], &[s_vel], &[s_acc], &[s_jerk]);
-        let traj = sample_time_scaled_joint_path(&q_samples, &dq_ds, s_curve.as_ref(), total, dt);
+        let profile = ScalarSCurveProfile::plan(1.0, s_vel, s_acc, s_jerk);
+        let total = Duration::from_secs_f64(profile.total_time());
+        let s_curve = |time: Duration| [profile.sample(time.as_secs_f64())];
+        let traj = sample_time_scaled_joint_path(&q_samples, &dq_ds, s_curve, total, dt);
 
         match joint_traj_limit_violation(&traj, dt, limits, options.validate_jerk) {
             None => return Ok(traj),
@@ -432,7 +437,10 @@ where
 /// Plan a straight line with slerped orientation from `start` to `target`,
 /// within the joint bounds and the end effector's `cartesian` bounds, by
 /// [`plan_cartesian_path_traj_via_time_scaling`].
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "start, target, seed, inverse kinematics, joint and Cartesian limits, period and options are the independent inputs of one planning call"
+)]
 pub fn plan_cartesian_line_traj_via_time_scaling<IK, E, const N: usize>(
     start: Pose,
     target: Pose,
@@ -690,7 +698,7 @@ fn scalar_s_curve_bounds<const N: usize>(
 fn sample_time_scaled_joint_path<const N: usize>(
     q_samples: &[[f64; N]],
     dq_ds: &na::DMatrix<f64>,
-    s_curve: &dyn Fn(Duration) -> [f64; 1],
+    s_curve: impl Fn(Duration) -> [f64; 1],
     total: Duration,
     dt: f64,
 ) -> Vec<[f64; N]> {
@@ -923,7 +931,7 @@ mod tests {
     fn cartesian_bounds_slow_the_line() {
         let limits = one_joint(f64::INFINITY);
         let free = line(&limits, &CartesianLimits::UNBOUNDED, options()).unwrap();
-        let cartesian = CartesianLimits { linear_velocity: 0.1, ..CartesianLimits::UNBOUNDED };
+        let cartesian = CartesianLimits { linear_velocity_max: 0.1, ..CartesianLimits::UNBOUNDED };
         let slow = line(&limits, &cartesian, options()).unwrap();
         assert!(slow.len() > free.len());
         let speed = slow
@@ -940,8 +948,8 @@ mod tests {
         assert!(matches!(error, TimeScalingError::Invalid(_)), "{error}");
         // A Cartesian bound is enough.
         let cartesian = CartesianLimits {
-            linear_velocity: 0.1,
-            linear_acceleration: 0.5,
+            linear_velocity_max: 0.1,
+            linear_acceleration_max: 0.5,
             ..CartesianLimits::UNBOUNDED
         };
         assert!(line(&limits, &cartesian, options()).is_ok());
@@ -973,8 +981,8 @@ mod tests {
         let start = Pose::from_position([0.0, 0.0, 0.0]);
         let target = Pose::from_position([0.5, 0.0, 0.0]);
         let limits = CartesianLimits {
-            linear_velocity: 0.25,
-            angular_velocity: 1.0,
+            linear_velocity_max: 0.25,
+            angular_velocity_max: 1.0,
             ..CartesianLimits::UNBOUNDED
         };
         let bounds = PathBounds::for_line(&start, &target, &limits);

@@ -94,11 +94,11 @@ mod transport {
 
     use super::SafetyViolation;
 
-    /// Carried as `RoplatError::Io`, as `ControlSessionError` is, so the core
-    /// needs no safety variant and the concrete value survives.
+    /// Enters the core through `RoplatError::Node`, as `ControlSessionError`
+    /// does; the concrete value survives.
     impl From<SafetyViolation> for RoplatError {
         fn from(violation: SafetyViolation) -> Self {
-            std::io::Error::other(violation).into()
+            RoplatError::Node(Box::new(violation))
         }
     }
 
@@ -107,8 +107,7 @@ mod transport {
         /// lifecycle shutdown or a failed device cleanup wraps it.
         pub fn find(error: &RoplatError) -> Option<&Self> {
             match error {
-                RoplatError::Io(io) => {
-                    let inner = io.get_ref()?;
+                RoplatError::Node(inner) => {
                     if let Some(violation) = inner.downcast_ref::<Self>() {
                         return Some(violation);
                     }

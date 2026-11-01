@@ -190,9 +190,9 @@ fn arm(twist: Option<[f64; 6]>) -> ArmState<2> {
 #[test]
 fn cartesian_checks_both_parts_and_their_change() {
     let limits = CartesianLimits {
-        linear_velocity: 0.25,
-        angular_velocity: 1.0,
-        linear_acceleration: 10.0,
+        linear_velocity_max: 0.25,
+        angular_velocity_max: 1.0,
+        linear_acceleration_max: 10.0,
         ..CartesianLimits::UNBOUNDED
     };
     let mut check = CartesianVelocityCheck::<2>::new(limits);
@@ -290,14 +290,13 @@ fn latch_keeps_the_first_reason_until_cleared() {
 struct TwoJoints;
 
 impl Joints<2> for TwoJoints {
-    const JOINT_MIN: [f64; 2] = [-2.; 2];
-    const JOINT_MAX: [f64; 2] = [2.; 2];
-    const JOINT_VEL_BOUND: [f64; 2] = [3.; 2];
+    const JOINT_LIMITS: JointLimits<2> =
+        JointLimits { dq_max: [3.; 2], ..JointLimits::positions([-2.; 2], [2.; 2]) };
 }
 
 #[test]
 fn joint_limits_read_the_driver_constants() {
-    let limits = TwoJoints::joint_limits();
+    let limits = TwoJoints::JOINT_LIMITS;
     assert_eq!(
         (limits.q_min, limits.q_max, limits.dq_max),
         ([-2.; 2], [2.; 2], [3.; 2])
@@ -319,21 +318,20 @@ fn violations_are_found_inside_wrapping_errors() {
     let direct = RoplatError::from(violation.clone());
     assert_eq!(SafetyViolation::find(&direct), Some(&violation));
     let parallel = ParallelError::combine(
-        RoplatError::Other("sibling".into()),
+        RoplatError::Node("sibling".into()),
         violation.clone().into(),
     );
     assert_eq!(SafetyViolation::find(&parallel), Some(&violation));
     let lifecycle = LifecycleError::finish::<()>(
         Err(violation.clone().into()),
-        vec![RoplatError::Other("shutdown".into())],
+        vec![RoplatError::Node("shutdown".into())],
     )
     .unwrap_err();
     assert_eq!(SafetyViolation::find(&lifecycle), Some(&violation));
-    let session: RoplatError = std::io::Error::other(ControlSessionError {
+    let session = RoplatError::Node(Box::new(ControlSessionError {
         domain: Some(ControlDomainExit::Failed(violation.clone().into())),
         device: RobotException::NetworkError("cleanup".into()),
-    })
-    .into();
+    }));
     assert_eq!(SafetyViolation::find(&session), Some(&violation));
-    assert_eq!(SafetyViolation::find(&RoplatError::Other("x".into())), None);
+    assert_eq!(SafetyViolation::find(&RoplatError::Node("x".into())), None);
 }

@@ -536,11 +536,11 @@ mod node {
 
     use super::{CartesianTrackingError, CartesianTrajectoryFollower};
 
-    /// Carried as `RoplatError::Io`, as the joint follower's `TrackingError`
-    /// is, so the core needs no variant for it.
+    /// Enters the core through `RoplatError::Node`, as the joint follower's
+    /// `TrackingError` does.
     impl From<CartesianTrackingError> for RoplatError {
         fn from(error: CartesianTrackingError) -> Self {
-            std::io::Error::other(error).into()
+            RoplatError::Node(Box::new(error))
         }
     }
 
@@ -548,7 +548,7 @@ mod node {
         /// The tracking error a drive failed with, when it failed with one.
         pub fn find(error: &RoplatError) -> Option<&Self> {
             match error {
-                RoplatError::Io(io) => io.get_ref()?.downcast_ref(),
+                RoplatError::Node(error) => error.downcast_ref(),
                 _ => None,
             }
         }

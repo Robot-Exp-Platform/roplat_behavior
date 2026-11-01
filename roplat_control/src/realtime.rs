@@ -52,7 +52,7 @@ pub fn set_realtime_priority() -> RobotResult<()> {
                 ));
             }
 
-            // 设置当前线程优先级为最高
+            // Raise the current thread to the highest priority.
             let thread_handle = GetCurrentThread();
             if SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL as i32) == 0 {
                 return Err(RobotException::RealtimeException(

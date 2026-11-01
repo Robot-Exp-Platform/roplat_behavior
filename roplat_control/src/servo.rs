@@ -25,12 +25,13 @@
 //! controller follows its own command and does not drift. A cycle uses no
 //! heap allocation unless the model or the hook does.
 
+use crate::exit::missing;
 use std::{ops::ControlFlow, time::Duration};
 
 use nalgebra as na;
 use roplat_behavior::{
-    ControlStep, ForwardKinematics, Jaco, JacobianModel, JointState, RobotException, RobotResult,
-    msgs::JointLimits,
+    ControlExit, ControlStep, ForwardKinematics, Jaco, JacobianModel, JointState, RobotException,
+    RobotResult, msgs::JointLimits,
 };
 
 /// The frame a twist command is written in. Either way the linear part is
@@ -102,6 +103,8 @@ pub struct ServoStep<const N: usize> {
     pub status: ServoStatus,
 }
 
+// dyn(d): a generic `F` would appear in the public `CartesianServo` type name;
+// one call per control cycle is negligible against the servo step.
 type Hook<const N: usize> = Box<dyn FnMut(&[f64; N]) -> f64 + Send>;
 
 /// A Cartesian servo for an arm with `N` joints; see the
@@ -351,13 +354,13 @@ where
     {
         move |state, period| {
             let Some(q) = state.meas.q() else {
-                return ControlFlow::Break(());
+                return ControlFlow::Break(missing("joint positions"));
             };
             let (twist, done) = source(state, period);
             let dt = self.period_seconds(period);
             match self.step(&q, twist, dt) {
                 Ok(step) => ControlFlow::Continue((step.dq, done)),
-                Err(_) => ControlFlow::Break(()),
+                Err(error) => ControlFlow::Break(ControlExit::Failed(error)),
             }
         }
     }
@@ -376,7 +379,7 @@ where
         let mut command: Option<[f64; N]> = None;
         move |state, period| {
             let Some(q) = command.or_else(|| state.meas.q()) else {
-                return ControlFlow::Break(());
+                return ControlFlow::Break(missing("joint positions"));
             };
             let (twist, done) = source(state, period);
             let dt = self.period_seconds(period);
@@ -386,7 +389,7 @@ where
                     command = Some(next);
                     ControlFlow::Continue((next, done))
                 }
-                Err(_) => ControlFlow::Break(()),
+                Err(error) => ControlFlow::Break(ControlExit::Failed(error)),
             }
         }
     }

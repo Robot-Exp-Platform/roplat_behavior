@@ -72,7 +72,7 @@ impl ControlWith<JointPositionControl<2>> for Servo {
                         return Ok(());
                     }
                 }
-                ControlFlow::Break(()) => {
+                ControlFlow::Break(_) => {
                     self.breaks += 1;
                     return Ok(());
                 }
