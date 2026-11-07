@@ -402,14 +402,55 @@ impl<const N: usize> PlanningScene<N> {
         geometry: &Geometry,
         pose: na::Isometry3<f64>,
     ) -> Result<(), SceneError> {
-        if self.model.link(name).is_some() || self.object(name).is_ok() {
+        self.write_world_object(name, geometry, pose, false)
+    }
+
+    /// Places a world object or replaces its geometry and pose in place.
+    ///
+    /// The caller supplies a finite rigid pose in the world frame.
+    /// The name and position in [`object_names`](Self::object_names) survive a
+    /// replacement. Link names return [`SceneError::NameTaken`], attached
+    /// objects return [`SceneError::Attached`], and shape construction errors
+    /// leave the previous object intact. Use [`move_object`](Self::move_object)
+    /// when only the pose changes to avoid rebuilding the shape.
+    pub fn set_object(
+        &mut self,
+        name: &str,
+        geometry: &Geometry,
+        pose: na::Isometry3<f64>,
+    ) -> Result<(), SceneError> {
+        self.write_world_object(name, geometry, pose, true)
+    }
+
+    fn write_world_object(
+        &mut self,
+        name: &str,
+        geometry: &Geometry,
+        pose: na::Isometry3<f64>,
+        replace: bool,
+    ) -> Result<(), SceneError> {
+        if self.model.link(name).is_some() {
             return Err(SceneError::NameTaken(name.into()));
+        }
+        let existing = self.objects.iter_mut().find(|object| object.name == name);
+        if let Some(object) = existing.as_deref() {
+            if !replace {
+                return Err(SceneError::NameTaken(name.into()));
+            }
+            if matches!(object.mount, Mount::Link { .. }) {
+                return Err(SceneError::Attached(name.into()));
+            }
         }
         let part = part(geometry, na::Isometry3::identity(), |name: &str| {
             PathBuf::from(name)
         })?;
-        self.objects
-            .push(Object { name: name.into(), part, mount: Mount::World(pose) });
+        if let Some(object) = existing {
+            object.part = part;
+            object.mount = Mount::World(pose);
+        } else {
+            self.objects
+                .push(Object { name: name.into(), part, mount: Mount::World(pose) });
+        }
         Ok(())
     }
 

@@ -155,6 +155,42 @@ fn objects_in_the_world_may_overlap_each_other() {
 }
 
 #[test]
+fn set_object_installs_a_shape_only_after_it_is_ready() {
+    let mut scene = scene();
+    let q = [0.0, 0.0];
+    let far = at(0.7, 0.0, 1.0);
+    let near = at(0.7, 0.0, 0.36);
+    scene.set_object("block", &cube(0.01), far).unwrap();
+    scene.add_object("other", &cube(0.01), far).unwrap();
+    scene.set_object("block", &cube(0.01), near).unwrap();
+    assert!(scene.is_free(&q));
+
+    scene.set_object("block", &cube(0.3), near).unwrap();
+    assert!(!scene.is_free(&q));
+    assert_eq!(scene.object_names().collect::<Vec<_>>(), ["block", "other"]);
+    assert!(matches!(
+        scene.add_object("block", &cube(0.01), far),
+        Err(SceneError::NameTaken(_))
+    ));
+    assert!(matches!(
+        scene.set_object("block", &cube(-1.0), far),
+        Err(SceneError::InvalidGeometry(_))
+    ));
+    assert!(!scene.is_free(&q));
+    assert_eq!(scene.object_pose("block", &q).unwrap(), near);
+    assert!(matches!(
+        scene.set_object("base", &cube(-1.0), far),
+        Err(SceneError::NameTaken(_))
+    ));
+    scene.attach("block", "flange", &[], &q).unwrap();
+    assert!(matches!(
+        scene.set_object("block", &cube(-1.0), far),
+        Err(SceneError::Attached(_))
+    ));
+    assert!(scene.detach("block", &q).is_ok());
+}
+
+#[test]
 fn an_attached_object_moves_with_its_link_and_may_touch_listed_links() {
     let mut scene = scene();
     let straight = [0.0, 0.0];

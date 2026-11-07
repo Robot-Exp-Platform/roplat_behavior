@@ -11,6 +11,7 @@ Part of the [roplat_behavior workspace](../README.md). 0.9 is not on crates.io y
 The scene:
 
 - `PlanningScene` holds a robot read from its URDF (meshes as convex hulls), objects in the world, objects attached to links, allowed contacts (adjacent links from the start) and a padding.
+- `add_object` requires a new name. `set_object` installs new geometry and pose for a world object, keeping its old geometry on error. `move_object` updates only the pose.
 - Through `CollisionCheck` it answers the validity check `plan_joint_path` in [`roplat_trajectory`](../roplat_trajectory/README.md) asks of its caller (`scene.is_free(q)`); `contacts` lists the contacts and `clearance` gives the nearest pair.
 - `set_pair_padding` lets a pair keep its own clearance in place of the scene's padding, in configuration and whole-motion checks alike.
 - `motion_contact` and `motion_is_free` check a straight joint motion as a whole by conservative advancement, so a thin obstacle between two samples is not stepped over.
