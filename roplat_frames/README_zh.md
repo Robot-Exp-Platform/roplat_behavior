@@ -11,6 +11,7 @@
 - `frame_id` 在编译期由帧名得到 `FrameId`，生产者填写 `Header::frame` 时不需要持有注册表。
 - `FrameTree` 在构造时确定拓扑与静态变换：URDF 的连杆与关节经 `FrameTreeBuilder::model`，标定得到的外参经 `FrameTreeBuilder::fixed`。
 - `FrameBuffer` 在同一时钟上保存关节位置与动态变换的时间历史，按 `Stamp` 回答 `FrameBuffer::lookup`。写入与查询不分配内存，也不阻塞。
+- `FrameBuffer::latest_sample_time` 取路径上各采样边最新时刻的最小值，纯静态路径返回 `None`。以返回的时刻调用 `lookup` 可验证每条历史能否在该时取值。
 - 相机安装位置的手眼标定（`calibration::calibrate_hand_eye`，眼在手上或眼在手外），结果成为树中的固定边。
 - 从图像得到标定板位姿：`target::detect_chessboard` 以亚像素精度找出棋盘格角点，各视角下顺序一致；`target::target_pose` 求标定板位姿。
 - 按 `CameraInfo` 描述的镜头畸变：`lens::distort`、`lens::undistort` 与 `lens::Rectify`，支持 plumb_bob、rational polynomial 与鱼眼模型，相当于 `image_proc` 的校正。

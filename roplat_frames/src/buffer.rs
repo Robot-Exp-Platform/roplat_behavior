@@ -85,6 +85,50 @@ impl FrameBuffer {
             .map(Pose::from_isometry)
     }
 
+    /// Earliest of the latest stored stamps on all joint and dynamic edges
+    /// between `parent` and `child`. Fixed edges impose no bound. Two known
+    /// frames joined only by fixed edges (including one frame queried against
+    /// itself) return `Ok(None)`.
+    ///
+    /// Returns [`FrameError::UnknownFrame`] for an unknown endpoint,
+    /// [`FrameError::Unpositioned`] for a joint without a group, and
+    /// [`FrameError::NoData`] for an empty track on the path.
+    ///
+    /// Pass a returned stamp, including zero, to [`lookup`](Self::lookup) to
+    /// obtain a pose. Retained histories and interpolation gap limits can
+    /// still prevent that lookup from succeeding.
+    pub fn latest_sample_time(
+        &self,
+        parent: FrameId,
+        child: FrameId,
+    ) -> Result<Option<Stamp>, FrameError> {
+        let (mut a, mut b) = (self.tree.index(parent)?, self.tree.index(child)?);
+        let mut earliest_latest = None;
+        // Follow the same edge order as FrameTree::relative, without composing poses.
+        while a != b {
+            let (left, right) = (&self.tree.frames[a], &self.tree.frames[b]);
+            let frame = if left.depth >= right.depth {
+                a = left.parent;
+                left
+            } else {
+                b = right.parent;
+                right
+            };
+            let index = match frame.edge {
+                Edge::Fixed(_) | Edge::Root => continue,
+                Edge::Joint { slot: None, .. } => return Err(FrameError::Unpositioned(frame.id)),
+                Edge::Joint { slot: Some((index, _)), .. } | Edge::Dynamic(index) => index,
+            };
+            let track = &self.tracks[index];
+            if track.len == 0 {
+                return Err(FrameError::NoData(frame.id));
+            }
+            let latest = track.stamps[track.slot(track.len - 1)];
+            earliest_latest = Some(earliest_latest.map_or(latest, |t: i64| t.min(latest)));
+        }
+        Ok(earliest_latest.map(|t| Stamp::new(self.clock, t)))
+    }
+
     fn check(&self, stamp: Stamp) -> Result<(), FrameError> {
         if stamp.clock == self.clock {
             Ok(())

@@ -66,6 +66,8 @@ fn writes_and_lookups_do_not_allocate() {
             frames.set_transform(t, &seen).unwrap();
             black_box(frames.lookup(WORLD, MUG, ms(i as f64 - 0.5)).ok());
             black_box(frames.lookup(MUG, FINGER, t).unwrap_err());
+            black_box(frames.latest_sample_time(WORLD, MUG).unwrap());
+            black_box(frames.latest_sample_time(MUG, FINGER).unwrap_err());
             black_box(frames.lookup(BASE, HAND, ms(i as f64 + 5.)).unwrap_err());
             black_box(frames.set_joints(arm, ms(0.), &[0., 0.]).ok());
             black_box(frames.set_joints(foreign, t, &[0., 0.]).unwrap_err());

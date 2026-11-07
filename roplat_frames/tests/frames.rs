@@ -365,6 +365,125 @@ fn lookups_in_opposite_directions_are_inverse() {
 }
 
 #[test]
+fn latest_sample_time_takes_the_minimum_across_joint_and_dynamic_edges() {
+    let (mut frames, arm) = buffer(History::new(2), History::new(2));
+    for t in [11., 12.] {
+        frames.set_transform(ms(t), &mug_seen(0.1, 0.)).unwrap();
+    }
+    // The empty arm track above CAMERA is outside this path.
+    assert_eq!(frames.latest_sample_time(CAMERA, MUG), Ok(Some(ms(12.))));
+    assert_eq!(
+        frames.latest_sample_time(BASE, HAND),
+        Err(FrameError::NoData(FORE))
+    );
+    for (t, angle) in [(10., 0.), (14., 0.4)] {
+        frames.set_joints(arm, ms(t), &[angle, 0.]).unwrap();
+    }
+    let expected =
+        BASE_IN_WORLD * hand_in_base([0.2, 0.]) * CAMERA_IN_HAND * mug_seen(0.1, 0.).pose;
+    for (parent, child, pose) in [(WORLD, MUG, expected), (MUG, WORLD, expected.inverse())] {
+        let at = frames.latest_sample_time(parent, child).unwrap().unwrap();
+        assert_eq!(at, ms(12.));
+        assert_pose(frames.lookup(parent, child, at).unwrap(), pose);
+    }
+    // The dynamic history wraps. The arm now limits the stamp in both directions.
+    frames.set_transform(ms(19.), &mug_seen(0.1, 0.)).unwrap();
+    for (parent, child) in [(WORLD, MUG), (MUG, WORLD)] {
+        assert_eq!(frames.latest_sample_time(parent, child), Ok(Some(ms(14.))));
+    }
+}
+
+#[test]
+fn latest_sample_time_distinguishes_zero_static_and_missing_data() {
+    let (mut frames, _) = buffer(History::new(1), History::new(1));
+    assert_eq!(frames.latest_sample_time(HAND, CAMERA), Ok(None));
+    assert_eq!(frames.latest_sample_time(FINGER, FINGER), Ok(None));
+    let unknown = frame_id("unknown");
+    for (parent, child) in [(WORLD, unknown), (unknown, WORLD), (unknown, unknown)] {
+        assert_eq!(
+            frames.latest_sample_time(parent, child),
+            Err(FrameError::UnknownFrame(unknown))
+        );
+    }
+    for (parent, child) in [(HAND, FINGER), (FINGER, HAND)] {
+        assert_eq!(
+            frames.latest_sample_time(parent, child),
+            Err(FrameError::Unpositioned(FINGER))
+        );
+    }
+    for (parent, child) in [(CAMERA, MUG), (MUG, CAMERA)] {
+        assert_eq!(
+            frames.latest_sample_time(parent, child),
+            Err(FrameError::NoData(MUG))
+        );
+    }
+    frames.set_transform(ms(0.), &mug_seen(1., 0.)).unwrap();
+    assert_eq!(frames.latest_sample_time(MUG, CAMERA), Ok(Some(ms(0.))));
+}
+
+#[test]
+fn a_resolved_stamp_can_fall_before_another_history_or_inside_a_gap() {
+    for (start, end, failure) in [
+        (
+            15.,
+            17.,
+            FrameError::BeforeHistory { frame: FORE, at: ms(12.).nanos, earliest: ms(15.).nanos },
+        ),
+        (
+            10.,
+            14.,
+            FrameError::Gap { frame: FORE, before: ms(10.).nanos, after: ms(14.).nanos },
+        ),
+    ] {
+        let arm_history = History::new(2).max_gap(Duration::from_millis(2));
+        let (mut frames, arm) = buffer(arm_history, History::new(2));
+        for t in [start, end] {
+            frames.set_joints(arm, ms(t), &[0.1, 0.2]).unwrap();
+        }
+        for t in [11., 12.] {
+            frames.set_transform(ms(t), &mug_seen(1., 0.)).unwrap();
+        }
+        for (parent, child) in [(WORLD, MUG), (MUG, WORLD)] {
+            let at = frames.latest_sample_time(parent, child).unwrap().unwrap();
+            assert_eq!(at, ms(12.));
+            assert_eq!(frames.lookup(parent, child, at), Err(failure));
+        }
+    }
+}
+
+#[test]
+fn latest_sample_time_reports_the_first_bad_edge_visited() {
+    let tree = FrameTree::builder()
+        .dynamic("world", "left", History::new(1))
+        .dynamic("world", "right", History::new(1))
+        .build()
+        .unwrap();
+    let mut frames = FrameBuffer::new(tree, clock::MONOTONIC).unwrap();
+    let (left, right) = (frame_id("left"), frame_id("right"));
+    for (parent, child) in [(left, right), (right, left)] {
+        assert_eq!(
+            frames.latest_sample_time(parent, child),
+            Err(FrameError::NoData(parent))
+        );
+        assert_eq!(
+            frames.lookup(parent, child, ms(0.)),
+            Err(FrameError::NoData(parent))
+        );
+    }
+    for (child, t) in [(left, 3.), (right, 7.)] {
+        frames
+            .set_transform(
+                ms(t),
+                &Transform { parent: WORLD, child, pose: Pose::IDENTITY },
+            )
+            .unwrap();
+    }
+    for (parent, child) in [(left, right), (right, left)] {
+        assert_eq!(frames.latest_sample_time(parent, child), Ok(Some(ms(3.))));
+    }
+}
+
+#[test]
 fn malformed_trees_are_rejected() {
     let pose = Pose::IDENTITY;
     let rejected = |builder: FrameTreeBuilder| builder.build().unwrap_err();

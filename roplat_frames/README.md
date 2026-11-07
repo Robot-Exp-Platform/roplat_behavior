@@ -11,6 +11,7 @@ Part of the [roplat_behavior workspace](../README.md). 0.9 is not on crates.io y
 - `frame_id` derives a `FrameId` from a frame name at compile time, so producers can fill `Header::frame` without holding a registry.
 - `FrameTree` fixes the topology and the static transforms when it is built: URDF links and joints through `FrameTreeBuilder::model`, calibrated extrinsics through `FrameTreeBuilder::fixed`.
 - `FrameBuffer` keeps a time history of joint positions and dynamic transforms on one clock and answers `FrameBuffer::lookup` at a `Stamp`. Writes and lookups do not allocate and never block.
+- `FrameBuffer::latest_sample_time` returns the minimum latest stamp among sampled edges on a path, or `None` for a fixed-only path. Calling `lookup` at that stamp checks whether each history covers it.
 - Hand-eye calibration of a camera mount (`calibration::calibrate_hand_eye`, eye in hand or eye to hand), for the fixed edge it becomes.
 - The target pose from images: `target::detect_chessboard` finds a chessboard's corners to a fraction of a pixel, in an order fixed across views, and `target::target_pose` solves the board's pose.
 - Lens distortion as `CameraInfo` describes it: `lens::distort`, `lens::undistort` and `lens::Rectify` for the plumb_bob, rational polynomial and fisheye models, as `image_proc` rectifies.
