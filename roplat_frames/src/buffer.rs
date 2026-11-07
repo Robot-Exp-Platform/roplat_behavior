@@ -15,6 +15,7 @@ use crate::{FrameError, FrameTree, JointGroup, TreeError};
 /// Storage is allocated by [`new`](Self::new). Writes and lookups do not
 /// allocate and never wait for data: a lookup the history does not cover
 /// fails, and the caller decides whether to try again later.
+/// Cloning copies the samples into independent storage and preserves group handles.
 #[derive(Clone, Debug)]
 pub struct FrameBuffer {
     tree: FrameTree,
@@ -42,7 +43,8 @@ impl FrameBuffer {
     }
 
     /// Records the positions of `group` at `stamp`. A stamp equal to the
-    /// latest one replaces that sample.
+    /// latest one replaces that sample. Checks the clock, the group, the
+    /// positions and the timestamp order, in that order.
     pub fn set_joints<const N: usize>(
         &mut self,
         group: JointGroup<N>,
@@ -50,10 +52,8 @@ impl FrameBuffer {
         q: &[f64; N],
     ) -> Result<(), FrameError> {
         self.check(stamp)?;
-        if !self.tree.is_group(group.index, N) {
-            return Err(FrameError::ForeignGroup);
-        }
-        self.tracks[group.index].push(stamp.nanos, q)
+        let track = self.tree.group_track(group)?;
+        self.tracks[track].push(stamp.nanos, q)
     }
 
     /// Records `transform.child` in `transform.parent` at `stamp`; the child
@@ -140,8 +140,9 @@ fn interpolate(a: na::Isometry3<f64>, b: na::Isometry3<f64>, s: f64) -> na::Isom
     na::Isometry3::from_parts(translation.into(), rotation)
 }
 
-fn nanos(d: Duration) -> i64 {
-    i64::try_from(d.as_nanos()).unwrap_or(i64::MAX)
+/// The greatest distance between two signed nanosecond stamps is u64::MAX.
+fn nanos(d: Duration) -> u64 {
+    u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
 }
 
 /// Where a lookup instant falls: on one sample, or between two at fraction `s`.
@@ -154,8 +155,8 @@ enum Sample {
 #[derive(Clone, Debug)]
 struct Track {
     stride: usize,
-    hold: i64,
-    max_gap: i64,
+    hold: u64,
+    max_gap: u64,
     stamps: Box<[i64]>,
     values: Box<[f64]>,
     /// Slot of the oldest sample.
@@ -169,7 +170,7 @@ impl Track {
         Self {
             stride: spec.stride,
             hold: nanos(history.hold),
-            max_gap: history.max_gap.map_or(i64::MAX, nanos),
+            max_gap: history.max_gap.map_or(u64::MAX, nanos),
             stamps: vec![0; history.capacity].into(),
             values: vec![0.; history.capacity * spec.stride].into(),
             head: 0,
@@ -223,14 +224,14 @@ impl Track {
         let (first, last) = (self.slot(0), self.slot(self.len - 1));
         let (earliest, latest) = (self.stamps[first], self.stamps[last]);
         if at >= latest {
-            return if at.saturating_sub(latest) <= self.hold {
+            return if at.abs_diff(latest) <= self.hold {
                 Ok(Sample::One(last))
             } else {
                 Err(FrameError::AfterLatest { frame, at, latest })
             };
         }
         if at < earliest {
-            return if earliest.saturating_sub(at) <= self.hold {
+            return if earliest.abs_diff(at) <= self.hold {
                 Ok(Sample::One(first))
             } else {
                 Err(FrameError::BeforeHistory { frame, at, earliest })
@@ -251,10 +252,14 @@ impl Track {
         if at == before {
             return Ok(Sample::One(lo));
         }
-        let span = after.saturating_sub(before);
+        let span = after.abs_diff(before);
         if span > self.max_gap {
             return Err(FrameError::Gap { frame, before, after });
         }
-        Ok(Sample::Two(lo, hi, (at - before) as f64 / span as f64))
+        Ok(Sample::Two(
+            lo,
+            hi,
+            at.abs_diff(before) as f64 / span as f64,
+        ))
     }
 }

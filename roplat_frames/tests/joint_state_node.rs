@@ -122,6 +122,29 @@ async fn a_state_without_positions_fails_when_raised() {
 }
 
 #[tokio::test]
+async fn node_checks_positions_then_delegates_clock_and_group_validation() {
+    let (mut frames, _) = sim_buffer();
+    let (_, foreign) = sim_buffer();
+    let mut node = JointStateNode::<2>::new(foreign);
+    assert_eq!(
+        node.process((ms(0.), JointState::default()), (&mut frames,))
+            .await,
+        Err(FrameError::MissingPositions)
+    );
+    assert_eq!(
+        node.process((ms(0.), measured([1., 0.])), (&mut frames,))
+            .await,
+        Err(FrameError::ClockMismatch { expected: clock::SIMULATION, got: clock::MONOTONIC })
+    );
+    let at = Stamp::new(clock::SIMULATION, 0);
+    assert_eq!(
+        node.process((at, measured([1., 0.])), (&mut frames,)).await,
+        Err(FrameError::ForeignGroup)
+    );
+    assert_eq!(frames.lookup(BASE, HAND, at), Err(FrameError::NoData(FORE)));
+}
+
+#[tokio::test]
 async fn accepts_positions_samples_and_states() {
     let (mut frames, arm) = sim_buffer();
     let at = |ms: i64| Stamp::new(clock::SIMULATION, ms * 1_000_000);

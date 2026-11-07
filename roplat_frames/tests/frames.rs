@@ -153,6 +153,87 @@ fn does_not_interpolate_across_a_gap() {
 }
 
 #[test]
+fn joint_and_dynamic_tracks_interpolate_across_the_signed_stamp_range() {
+    let (mut frames, arm) = buffer(History::new(2), History::new(2));
+    let stamp = |t| Stamp::new(clock::MONOTONIC, t);
+    for (t, value) in [(i64::MIN, 0.), (i64::MAX, 1.)] {
+        frames.set_joints(arm, stamp(t), &[value, -value]).unwrap();
+        frames
+            .set_transform(stamp(t), &mug_seen(value, value))
+            .unwrap();
+    }
+    for (t, fraction) in [(-(1 << 62), 0.25), (0, 0.5), (1 << 62, 0.75)] {
+        assert_pose(
+            frames.lookup(BASE, HAND, stamp(t)).unwrap(),
+            hand_in_base([fraction, -fraction]),
+        );
+        assert_pose(
+            frames.lookup(CAMERA, MUG, stamp(t)).unwrap(),
+            mug_seen(fraction, fraction).pose,
+        );
+    }
+}
+
+// Endpoint, configured limit, and whether the distance from i64::MIN is covered.
+const WIDE_LIMITS: [(i64, Duration, bool); 6] = [
+    (-1, Duration::from_nanos(i64::MAX as u64), true),
+    (0, Duration::from_nanos(i64::MAX as u64), false),
+    (0, Duration::from_nanos(1_u64 << 63), true),
+    (i64::MAX, Duration::from_nanos(u64::MAX - 1), false),
+    (i64::MAX, Duration::from_nanos(u64::MAX), true),
+    (i64::MAX, Duration::MAX, true),
+];
+
+#[test]
+fn wide_gap_limits_include_equality_and_leave_exact_samples_readable() {
+    let stamp = |t| Stamp::new(clock::MONOTONIC, t);
+    for (end, limit, covers_gap) in WIDE_LIMITS {
+        let (mut frames, _) = buffer(History::new(1), History::new(2).max_gap(limit));
+        for t in [i64::MIN, end] {
+            frames.set_transform(stamp(t), &mug_seen(1., 0.)).unwrap();
+        }
+        let lookup = |t| frames.lookup(CAMERA, MUG, stamp(t));
+        assert_pose(lookup(i64::MIN).unwrap(), mug_seen(1., 0.).pose);
+        assert_pose(lookup(end).unwrap(), mug_seen(1., 0.).pose);
+        let inside = lookup(-2);
+        if covers_gap {
+            assert_pose(inside.unwrap(), mug_seen(1., 0.).pose);
+        } else {
+            assert_eq!(
+                inside,
+                Err(FrameError::Gap { frame: MUG, before: i64::MIN, after: end })
+            );
+        }
+    }
+}
+
+#[test]
+fn wide_hold_limits_use_the_exact_distance_in_both_directions() {
+    let stamp = |t| Stamp::new(clock::MONOTONIC, t);
+    for (end, limit, held) in WIDE_LIMITS {
+        let (mut frames, _) = buffer(History::new(1), History::new(1).hold(limit));
+        let seen = mug_seen(1., 0.);
+        frames.set_transform(stamp(i64::MIN), &seen).unwrap();
+        let after = frames.lookup(CAMERA, MUG, stamp(end));
+        frames.set_transform(stamp(end), &seen).unwrap();
+        let before = frames.lookup(CAMERA, MUG, stamp(i64::MIN));
+        if held {
+            assert_pose(after.unwrap(), seen.pose);
+            assert_pose(before.unwrap(), seen.pose);
+        } else {
+            assert_eq!(
+                after,
+                Err(FrameError::AfterLatest { frame: MUG, at: end, latest: i64::MIN })
+            );
+            assert_eq!(
+                before,
+                Err(FrameError::BeforeHistory { frame: MUG, at: i64::MIN, earliest: end })
+            );
+        }
+    }
+}
+
+#[test]
 fn a_full_history_drops_its_oldest_sample() {
     let (mut frames, arm) = buffer(History::new(3), History::new(1));
     for i in 0..5 {
@@ -433,5 +514,58 @@ fn group_handles_belong_to_their_tree() {
     assert_eq!(
         frames.set_joints(foreign, ms(0.), &[0., 0.]),
         Err(FrameError::ForeignGroup)
+    );
+}
+
+#[test]
+fn independently_built_groups_at_the_same_index_cannot_write_each_others_tracks() {
+    let (mut frames, own) = buffer(History::new(2), History::new(1));
+    let (_, foreign) = buffer(History::new(2), History::new(1));
+    assert_ne!(own, foreign);
+    frames.set_joints(own, ms(1.), &[0.1, 0.2]).unwrap();
+    assert_eq!(
+        frames.set_joints(foreign, ms(1.), &[0.3, 0.4]),
+        Err(FrameError::ForeignGroup)
+    );
+    let wrong_clock = Stamp::new(clock::SIMULATION, 0);
+    assert_eq!(
+        frames.set_joints(foreign, wrong_clock, &[f64::NAN; 2]),
+        Err(FrameError::ClockMismatch { expected: clock::MONOTONIC, got: clock::SIMULATION })
+    );
+    assert_eq!(
+        frames.set_joints(foreign, ms(0.), &[f64::NAN; 2]),
+        Err(FrameError::ForeignGroup)
+    );
+    assert_eq!(
+        frames.set_joints(own, ms(0.), &[f64::NAN; 2]),
+        Err(FrameError::InvalidValue)
+    );
+    assert_pose(
+        frames.lookup(BASE, HAND, ms(1.)).unwrap(),
+        hand_in_base([0.1, 0.2]),
+    );
+}
+
+#[test]
+fn clones_accept_the_same_handles_and_buffers_keep_their_own_history() {
+    let tree = FrameTree::builder()
+        .model(&model())
+        .joints("finger", &["finger"], History::new(1))
+        .joints("arm", &["shoulder", "elbow"], History::new(2))
+        .build()
+        .unwrap();
+    let arm = tree.group::<2>("arm").unwrap();
+    let mut frames = FrameBuffer::new(tree.clone(), clock::MONOTONIC).unwrap();
+    assert_eq!(arm, frames.tree().group::<2>("arm").unwrap());
+    frames.set_joints(arm, ms(0.), &[0.1, 0.2]).unwrap();
+    let mut copy = frames.clone();
+    copy.set_joints(arm, ms(0.), &[0.3, 0.4]).unwrap();
+    assert_pose(
+        frames.lookup(BASE, HAND, ms(0.)).unwrap(),
+        hand_in_base([0.1, 0.2]),
+    );
+    assert_pose(
+        copy.lookup(BASE, HAND, ms(0.)).unwrap(),
+        hand_in_base([0.3, 0.4]),
     );
 }

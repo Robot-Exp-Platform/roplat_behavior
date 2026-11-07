@@ -107,6 +107,8 @@ pub enum TreeError {
         len: usize,
         requested: usize,
     },
+    #[error("no unique joint group ids remain for this tree")]
+    GroupIdsExhausted,
     #[error("a frame buffer needs a named clock, not `clock::UNSPECIFIED`")]
     UnspecifiedClock,
 }

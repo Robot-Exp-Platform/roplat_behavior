@@ -64,7 +64,7 @@
 
 **超时。** 查询从不阻塞。tf2 的 `lookupTransform(…, timeout)` 会等待数据到达；roplat 节点合作式执行，不应在 `process` 里阻塞，所以数据未到就返回错误，由图决定下一周期再试。新鲜度由 `hold` 限定：用 `clock.now()` 查询时，最新样本比 now 旧出 `hold` 就失败，起到超时的作用。
 
-`hold`、`max_gap` 按源配置：1 kHz 的关节组 `hold` 取一两个周期；放在桌上的物体，检测结果可以保持数秒。只写一次、始终有效的锁存变换，用容量 1、`hold = Duration::MAX` 的动态边表示。
+`hold`、`max_gap` 按源配置。两者包含等于上限的时距，覆盖 `Stamp::nanos` 的完整有符号范围。两个时刻相距最多 `u64::MAX` 纳秒，时距与上限用整数比较，插值比例按 `f64` 计算。直接查询样本时刻始终可以取该样本，无须跨间隙插值。1 kHz 的关节组可将 `hold` 设为一两个周期；放在桌上的物体，检测结果可以保持数秒。只写一次、始终有效的锁存变换，用容量 1、`hold = Duration::MAX` 的动态边表示。
 
 不提供 tf2 的“最新公共时刻”（time 0）查询。roplat 图里时间戳随数据流动，查询方总能给出自己需要的时刻，例如关节状态或图像的 stamp。
 
@@ -74,7 +74,7 @@ feature `roplat` 下的 `JointStateNode<N, P = JointState<N>>`：
 
 - `Resources = (FrameBuffer,)`，`Input = (Stamp, P)`，`Output = Result<(), FrameError>`。业务错误是普通数据，图可以用 `?` 提升。
 - `P` 可以是 `JointState<N>`（取 `meas.q`）、`JointSample<N>`（取 `q`）或 `[f64; N]`。位置缺失时报 `MissingPositions`，不补零。
-- 关节组句柄 `JointGroup<N>` 由 `tree.group::<N>("arm")` 取得。组大小与 `N` 不符在取句柄时报错，之后写入不再检查长度。
+- 关节组句柄 `JointGroup<N>` 由 `tree.group::<N>("arm")` 取得。组大小与 `N` 不符在取句柄时报错。节点先读取位置，再由缓冲依次检查时钟、句柄归属、数值有限性和时间顺序。
 
 节点只把关节位置写入缓冲，link 位姿在查询时按需由 `Joint::transform` 计算。1 kHz 的写入只是拷贝 N 个数，三角函数只在查询时计算（相机、显示的频率）；插值关节位置也比插值各 link 位姿更贴近真实运动。
 
@@ -83,6 +83,8 @@ feature `roplat` 下的 `JointStateNode<N, P = JointState<N>>`：
 ## 所有权
 
 没有全局单例。`FrameBuffer` 是普通值，由创建层拥有，节点通过 `&mut frames >> node.resources.0` 借用。读取方也借用 `&mut`，与写入方按数据或 `.trigger` 依赖排序，没有依赖路径时 System 编译报错。`FrameTree` 可以单独使用，只做静态查询。同一进程可以有多棵树。
+
+关节组句柄只属于签发它的树及其克隆。`FrameBuffer::clone` 复制历史，两份缓冲独立接受写入。用相同声明再次 `build` 会得到一棵独立的树，向它使用原句柄会返回 `ForeignGroup` 并保留原样本。每次成功构造含关节组的树，在进程内用一个原子计数器划出一段不复用的编号；若剩余编号不足，建树返回 `TreeError::GroupIdsExhausted`。句柄本身只占一个机器字。写入时只需将编号换算为本树的组下标并判断范围。
 
 ## 提议与待裁定
 

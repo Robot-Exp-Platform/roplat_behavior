@@ -48,6 +48,9 @@ fn writes_and_lookups_do_not_allocate() {
     let tree = cell(History::new(16), History::new(4));
     let mut frames = FrameBuffer::new(tree.clone(), clock::MONOTONIC).unwrap();
     let arm = frames.tree().group::<2>("arm").unwrap();
+    let foreign = cell(History::new(1), History::new(1))
+        .group::<2>("arm")
+        .unwrap();
     let seen = Transform {
         parent: CAMERA,
         child: MUG,
@@ -65,6 +68,7 @@ fn writes_and_lookups_do_not_allocate() {
             black_box(frames.lookup(MUG, FINGER, t).unwrap_err());
             black_box(frames.lookup(BASE, HAND, ms(i as f64 + 5.)).unwrap_err());
             black_box(frames.set_joints(arm, ms(0.), &[0., 0.]).ok());
+            black_box(frames.set_joints(foreign, t, &[0., 0.]).unwrap_err());
             black_box(tree.lookup_static(HAND, CAMERA).unwrap());
         }
     });

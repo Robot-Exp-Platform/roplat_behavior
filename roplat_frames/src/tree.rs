@@ -1,5 +1,6 @@
 //! Topology, static transforms and the shape of each time history.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use nalgebra as na;
@@ -9,7 +10,8 @@ use roplat_msgs::{FrameId, Pose};
 use crate::{FrameError, TreeError, frame_id};
 
 /// How many samples a joint group or dynamic transform keeps, and how a
-/// lookup treats instants they do not cover.
+/// lookup treats instants they do not cover. Duration limits are inclusive
+/// across the full signed nanosecond range of the stamps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct History {
     pub(crate) capacity: usize,
@@ -38,12 +40,12 @@ impl History {
     }
 }
 
-/// A joint group of `N` joints, issued by [`FrameTree::group`] and valid for
-/// buffers of that tree.
+/// A joint group of `N` joints, issued by [`FrameTree::group`]. A handle is
+/// valid for its tree and clones of that tree. An independently built tree
+/// issues distinct handles even for identical group declarations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct JointGroup<const N: usize> {
-    /// Index of the group, which is also its track.
-    pub(crate) index: usize,
+    id: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +89,8 @@ pub struct FrameTree {
     root: usize,
     /// Group `i` has track `i`; dynamic transforms follow.
     groups: Box<[(String, usize)]>,
+    /// First handle id in this tree's disjoint range.
+    first_group_id: usize,
     pub(crate) tracks: Box<[TrackSpec]>,
 }
 
@@ -129,7 +133,7 @@ impl FrameTree {
         if len != N {
             return Err(TreeError::GroupSize { group: name.into(), len, requested: N });
         }
-        Ok(JointGroup { index })
+        Ok(JointGroup { id: self.first_group_id + index })
     }
 
     /// Pose of `child` in `parent` through fixed transforms only.
@@ -148,8 +152,15 @@ impl FrameTree {
             .map_err(|_| FrameError::UnknownFrame(frame))
     }
 
-    pub(crate) fn is_group(&self, index: usize, len: usize) -> bool {
-        self.groups.get(index).is_some_and(|&(_, n)| n == len)
+    pub(crate) fn group_track<const N: usize>(
+        &self,
+        group: JointGroup<N>,
+    ) -> Result<usize, FrameError> {
+        // The reserved range never wraps. An id below its start wraps past its end.
+        let index = group.id.wrapping_sub(self.first_group_id);
+        (index < self.groups.len())
+            .then_some(index)
+            .ok_or(FrameError::ForeignGroup)
     }
 
     /// Pose of `child` in `parent`, given each frame's pose in its parent.
@@ -260,6 +271,8 @@ impl FrameTreeBuilder {
         self.edge(parent, child, Decl::Dynamic(history))
     }
 
+    /// Builds an independent tree. Group handles issued by earlier builds
+    /// stay distinct even after those trees are dropped.
     pub fn build(self) -> Result<FrameTree, TreeError> {
         let names = self.names;
         let n = names.len();
@@ -376,12 +389,47 @@ impl FrameTreeBuilder {
             return Err(TreeError::IdCollision(a.clone(), b.clone()));
         }
 
+        // Handles are Copy and may outlive every copy of the issuing tree.
+        // Reserve ids only after validation and never recycle them.
+        static NEXT_GROUP_ID: AtomicUsize = AtomicUsize::new(0);
+        let first_group_id = reserve_group_ids(&NEXT_GROUP_ID, groups.len())?;
         Ok(FrameTree {
             frames: frames.into(),
             by_id: by_id.into(),
             root,
+            first_group_id,
             groups: groups.into(),
             tracks: tracks.into(),
         })
+    }
+}
+
+fn reserve_group_ids(next: &AtomicUsize, count: usize) -> Result<usize, TreeError> {
+    if count == 0 {
+        return Ok(0);
+    }
+    next.try_update(Ordering::Relaxed, Ordering::Relaxed, |first| {
+        first.checked_add(count)
+    })
+    .map_err(|_| TreeError::GroupIdsExhausted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_ids_are_never_recycled_on_exhaustion() {
+        let next = AtomicUsize::new(usize::MAX - 1);
+        assert_eq!(
+            reserve_group_ids(&next, 2),
+            Err(TreeError::GroupIdsExhausted)
+        );
+        assert_eq!(reserve_group_ids(&next, 1), Ok(usize::MAX - 1));
+        assert_eq!(
+            reserve_group_ids(&next, 1),
+            Err(TreeError::GroupIdsExhausted)
+        );
+        assert_eq!(reserve_group_ids(&next, 0), Ok(0));
     }
 }
