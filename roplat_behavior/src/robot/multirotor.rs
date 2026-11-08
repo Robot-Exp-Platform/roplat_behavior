@@ -119,11 +119,12 @@ pub trait Multirotor: Robot {
     /// Sends one setpoint and returns.
     fn send_setpoint(&mut self, setpoint: PositionSetpoint) -> RobotResult<()>;
 
-    /// Flies to `setpoint` and returns the state once the vehicle is within
-    /// the driver's tolerance of it and slower than its settle speed, both
-    /// documented; the vehicle holds it afterwards only while setpoints keep
-    /// coming.
-    fn go_to(&mut self, setpoint: PositionSetpoint) -> RobotResult<MultirotorState>;
+    /// Flies to `setpoint` and returns the state, stamped as
+    /// [`read_flight_state`](Self::read_flight_state) stamps it, once the
+    /// vehicle is within the driver's tolerance of it and slower than its
+    /// settle speed, both documented; the vehicle holds it afterwards only
+    /// while setpoints keep coming.
+    fn go_to(&mut self, setpoint: PositionSetpoint) -> RobotResult<Stamped<MultirotorState>>;
 
     /// Lands where the vehicle is; returns once it is on the ground with its
     /// motors stopped.

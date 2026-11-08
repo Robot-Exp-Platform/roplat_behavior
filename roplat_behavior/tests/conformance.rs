@@ -385,8 +385,8 @@ impl Multirotor for MockVehicle {
         Ok(())
     }
 
-    fn go_to(&mut self, _: PositionSetpoint) -> RobotResult<MultirotorState> {
-        Ok(self.state)
+    fn go_to(&mut self, _: PositionSetpoint) -> RobotResult<Stamped<MultirotorState>> {
+        self.read_flight_state()
     }
 
     fn land(&mut self) -> RobotResult<()> {
