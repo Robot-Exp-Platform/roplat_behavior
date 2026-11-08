@@ -62,8 +62,10 @@ pub trait ForceTorqueSensor {
 ///   face;
 /// - +Y points left, completing the frame.
 ///
-/// The origin is that of the maker's own sensor frame, which each driver
-/// names, and the header's `frame` names this body frame. A driver whose
+/// What the maker documents means the same as for the [`Lidar`] frame: its
+/// mechanical drawing or datasheet. The origin is that of the maker's own
+/// sensor frame, which each driver names, and the header's `frame` names this
+/// body frame. A driver whose
 /// device uses other axes rotates its readings into this frame and documents
 /// the rotation; it never mirrors them. A device marked forward-right-down
 /// (FRD) needs the half turn about +X that [`frd_to_flu`] applies.
@@ -211,6 +213,11 @@ pub struct LidarPoint {
 /// - +Y points left, completing the frame;
 /// - azimuth runs counter-clockwise about +Z from +X, so +Y is at +90°; a
 ///   planar scanner's points lie in the plane z = 0.
+///
+/// What the maker documents is its mechanical drawing or datasheet. The
+/// maker's own driver and its ROS frame are only references: where they
+/// disagree with the drawing, the driver follows the drawing and says so in
+/// its README.
 ///
 /// The origin is that of the maker's own sensor frame, which each driver
 /// names. A driver whose maker uses other axes rotates its points into this
