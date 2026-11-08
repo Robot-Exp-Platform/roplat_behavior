@@ -156,6 +156,14 @@ pub trait ControlWith<S: ControlSpace>: Robot {
     /// [`ControlExit::Failed`]. The driver must not invoke the callback again
     /// after either exit. Protocol-specific termination packets remain the
     /// driver's responsibility; `Break` is not an emergency stop.
+    ///
+    /// When the session returns `Ok`, after `done` or [`ControlExit::Stopped`],
+    /// an arm holds still without drifting: at the last commanded position on
+    /// a position channel, where the termination brought it to rest on the
+    /// others. The next motion or control call works without
+    /// [`enable`](crate::Robot::enable), and the driver documents the
+    /// controller mode the session leaves. After an error, the driver
+    /// documents what it leaves.
     fn control_with_flow<F>(&mut self, closure: F) -> RobotResult<()>
     where
         F: FnMut(S::Obs, Duration) -> ControlStep<S::Command>;

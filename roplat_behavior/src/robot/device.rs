@@ -62,8 +62,10 @@ pub trait ForceTorqueSensor {
 ///   face;
 /// - +Y points left, completing the frame.
 ///
-/// The origin is that of the maker's own sensor frame, which each driver
-/// names, and the header's `frame` names this body frame. A driver whose
+/// What the maker documents means the same as for the [`Lidar`] frame: its
+/// mechanical drawing or datasheet. The origin is that of the maker's own
+/// sensor frame, which each driver names, and the header's `frame` names this
+/// body frame. A driver whose
 /// device uses other axes rotates its readings into this frame and documents
 /// the rotation; it never mirrors them. A device marked forward-right-down
 /// (FRD) needs the half turn about +X that [`frd_to_flu`] applies.
@@ -212,6 +214,11 @@ pub struct LidarPoint {
 /// - azimuth runs counter-clockwise about +Z from +X, so +Y is at +90°; a
 ///   planar scanner's points lie in the plane z = 0.
 ///
+/// What the maker documents is its mechanical drawing or datasheet. The
+/// maker's own driver and its ROS frame are only references: where they
+/// disagree with the drawing, the driver follows the drawing and says so in
+/// its README.
+///
 /// The origin is that of the maker's own sensor frame, which each driver
 /// names. A driver whose maker uses other axes rotates its points into this
 /// frame and documents the rotation; it never mirrors them.
@@ -236,4 +243,167 @@ pub trait Lidar {
     /// The buffer belongs to the caller, so a loop that reuses it allocates
     /// only when a scan outgrows every scan before it.
     fn read_scan(&mut self, points: &mut Vec<LidarPoint>) -> RobotResult<Header>;
+}
+
+/// How the receiver solved a [`GnssFix`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GnssStatus {
+    /// No solution this epoch: the fix has no position.
+    NoFix,
+    /// A standalone solution from the satellites' signals alone.
+    Single,
+    /// Corrected by a satellite-based augmentation system (WAAS, EGNOS,
+    /// MSAS, GAGAN, ...).
+    Sbas,
+    /// Code-differential corrections from a base station or a network.
+    Dgnss,
+    /// Real-time kinematic, carrier-phase ambiguities not yet fixed.
+    RtkFloat,
+    /// Real-time kinematic, carrier-phase ambiguities fixed.
+    RtkFixed,
+    /// Precise point positioning from precise orbit and clock corrections.
+    Ppp,
+    /// Propagated by the receiver's own inertial or odometry dead reckoning,
+    /// without a GNSS solution this epoch.
+    DeadReckoning,
+    /// A position set in the receiver, such as a base station's surveyed or
+    /// entered position, not measured.
+    FixedPosition,
+}
+
+/// A position on the WGS84 ellipsoid.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Geodetic {
+    /// Degrees, north positive, in `[-90, 90]`.
+    pub latitude: f64,
+    /// Degrees, east positive, in `[-180, 180]`.
+    pub longitude: f64,
+    /// Metres above the ellipsoid, not above mean sea level; see
+    /// [`GnssFix::undulation`].
+    pub ellipsoidal_height: f64,
+}
+
+/// A time on the GPS time scale, which has no leap seconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GpsTime {
+    /// Weeks since the GPS epoch, 1980-01-06 00:00 UTC, counted through the
+    /// broadcast rollovers rather than modulo 1024.
+    pub week: u16,
+    /// Nanoseconds since the start of the week, below 604 800 s.
+    pub tow_ns: u64,
+}
+
+/// One solution epoch of a [`GnssReceiver`]. A field the device does not
+/// report this epoch is `None`, never filled with a stand-in value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GnssFix {
+    /// How the receiver solved this epoch.
+    pub status: GnssStatus,
+    /// The antenna reference point; `None` exactly when `status` is
+    /// [`GnssStatus::NoFix`].
+    pub position: Option<Geodetic>,
+    /// Metres from the ellipsoid up to the geoid at the position, by the
+    /// device's geoid model, so the height above mean sea level is
+    /// `ellipsoidal_height - undulation`.
+    pub undulation: Option<f64>,
+    /// Velocity of the antenna reference point, m/s, along east, north and up
+    /// of the local frame at the position.
+    pub velocity_enu: Option<[f64; 3]>,
+    /// The device's 1σ estimate of the position error along east, north and
+    /// up, metres. A device that reports one horizontal figure gives it for
+    /// both east and north; each driver documents which figures it maps.
+    pub sigma_enu: Option<[f64; 3]>,
+    /// Satellites used in the solution, not merely tracked.
+    pub satellites: Option<u16>,
+    /// Age of the differential or RTK corrections in use, seconds.
+    pub correction_age: Option<f64>,
+    /// The epoch's time by the device. A driver whose device sends UTC
+    /// converts it with a leap-second count it documents, or leaves this
+    /// `None`.
+    pub gps_time: Option<GpsTime>,
+}
+
+impl GnssFix {
+    /// An epoch without a solution and nothing else reported, and the base a
+    /// driver fills in: `GnssFix { status, position, ..GnssFix::NO_FIX }`.
+    pub const NO_FIX: Self = Self {
+        status: GnssStatus::NoFix,
+        position: None,
+        undulation: None,
+        velocity_enu: None,
+        sigma_enu: None,
+        satellites: None,
+        correction_age: None,
+        gps_time: None,
+    };
+}
+
+/// A GNSS receiver that delivers one fix per solution epoch.
+///
+/// # Position
+///
+/// The position is that of the antenna reference point, which the header's
+/// `frame` names. Latitude and longitude are WGS84 degrees, and the height is
+/// above the ellipsoid: a driver whose device sends the height above mean sea
+/// level adds the device's undulation back, as NMEA GGA, which sends both,
+/// requires. With RTK or PPP corrections the position is in the reference
+/// frame of the corrections, such as the coordinates an RTK base was given;
+/// the contract transforms no datum. Velocity is along the local east, north
+/// and up axes at the position, the world axes of [`ImuSensor`] orientation.
+///
+/// # Epochs
+///
+/// [`read_fix`](Self::read_fix) returns one fix per solution epoch. An epoch
+/// without a solution still comes back, with status
+/// [`NoFix`](GnssStatus::NoFix) and no position: never an error, and never a
+/// made-up position such as the last one, a zero or a configured default.
+/// [`DeadReckoning`](GnssStatus::DeadReckoning) and
+/// [`FixedPosition`](GnssStatus::FixedPosition) are positions the receiver
+/// itself reports as such.
+///
+/// The header's stamp is the driver's clock when the epoch's message was
+/// completely received, with no latency subtracted; a fix assembled from
+/// several messages of one epoch is stamped when the last of them is
+/// received. The device's own time of the epoch goes in
+/// [`gps_time`](GnssFix::gps_time). `seq` rises with every fix.
+pub trait GnssReceiver {
+    /// Blocks for the next epoch's fix.
+    fn read_fix(&mut self) -> RobotResult<Stamped<GnssFix>>;
+}
+
+/// The direction of a [`GnssHeading`] receiver's antenna baseline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Heading {
+    /// Radians in `(-π, π]`, counter-clockwise about up from east, as the yaw
+    /// of an [`ImuSensor`] orientation: east is 0 and north `π/2`.
+    pub yaw: f64,
+    /// Radians, the baseline's elevation above the local horizontal, positive
+    /// up.
+    pub pitch: Option<f64>,
+    /// 1σ of `yaw`, radians.
+    pub yaw_sigma: Option<f64>,
+    /// 1σ of `pitch`, radians.
+    pub pitch_sigma: Option<f64>,
+}
+
+/// A GNSS receiver with two antennas, or a moving-base pair, that measures
+/// the direction of the baseline between them.
+///
+/// The baseline runs from the primary antenna to the secondary as the device
+/// names them, after any mounting offset the device itself applies; the
+/// driver documents both, and the header's `frame` names the frame whose +X
+/// the yaw gives.
+///
+/// Makers report heading clockwise from north, usually in degrees. The yaw is
+/// `π/2 - heading` in radians, wrapped into `(-π, π]`: a heading of 0° (north)
+/// is `π/2`, 90° (east) is 0, 180° (south) is `-π/2`, and 270° (west) is `π`.
+///
+/// An epoch without a heading solution has no heading:
+/// [`read_heading`](Self::read_heading) returns the next epoch that has one,
+/// waiting as long as the driver's read budget allows, and the driver
+/// documents the error it returns when the budget runs out. Stamps and `seq`
+/// follow [`GnssReceiver`].
+pub trait GnssHeading {
+    /// Blocks for the next epoch with a heading solution.
+    fn read_heading(&mut self) -> RobotResult<Stamped<Heading>>;
 }

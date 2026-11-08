@@ -23,8 +23,8 @@ pub use control::{
     JointPositionControl, JointVelocityControl, TorqueControl,
 };
 pub use device::{
-    Camera, ForceTorqueSensor, Gripper, ImuSensor, Lidar, LidarPoint, frd_to_flu,
-    ned_frd_to_enu_flu, ned_to_enu,
+    Camera, ForceTorqueSensor, Geodetic, GnssFix, GnssHeading, GnssReceiver, GnssStatus, GpsTime,
+    Gripper, Heading, ImuSensor, Lidar, LidarPoint, frd_to_flu, ned_frd_to_enu_flu, ned_to_enu,
 };
 pub use endpoint::{EndPoint, EndPointPose};
 pub use joint::Joints;
@@ -51,7 +51,7 @@ pub use types::Pose;
 
 use std::time::Duration;
 
-use crate::RobotResult;
+use crate::{RobotException, RobotResult};
 
 /// # Robot: the single core behavior every device shares
 ///
@@ -62,8 +62,10 @@ use crate::RobotResult;
 ///
 /// Only [`State`](Robot::State), [`version`](Robot::version) and
 /// [`read_state`](Robot::read_state) are required; the remaining lifecycle hooks
-/// have safe no-op defaults so a minimal driver (or a simulator) overrides just
-/// what it actually needs.
+/// have no-op defaults so a minimal driver (or a simulator) overrides just
+/// what it actually needs. The exception is
+/// [`emergency_stop`](Robot::emergency_stop), whose default stops and then
+/// reports that it could not latch the stop.
 pub trait Robot {
     /// One frame of measured robot state.
     type State;
@@ -71,6 +73,11 @@ pub trait Robot {
     /// The nominal period of the robot's control cycle. A control callback
     /// receives this period as its `Duration`, or `(k + 1)` times it when `k`
     /// cycles were missed before it.
+    ///
+    /// For a driver with a control channel ([`ControlWith`]) it is that
+    /// channel's cycle period. A driver without one, which moves only point to
+    /// point (Yaskawa HSES, for example), gives the period at which it
+    /// refreshes the robot's state. The driver documents which.
     const CONTROL_PERIOD: Duration;
 
     /// Driver / firmware version string.
@@ -89,12 +96,15 @@ pub trait Robot {
         Ok(())
     }
 
-    /// Power-on / engage actuators.
+    /// Engages the actuators so that motion and control calls work, restoring
+    /// the power [`disable`](Robot::disable) may have cut.
     fn enable(&mut self) -> RobotResult<()> {
         Ok(())
     }
 
-    /// Disengage actuators.
+    /// Disengages the actuators. It may cut their power, with the brakes
+    /// engaged where the device has them; [`enable`](Robot::enable) restores
+    /// it.
     fn disable(&mut self) -> RobotResult<()> {
         Ok(())
     }
@@ -129,9 +139,22 @@ pub trait Robot {
         Ok(())
     }
 
-    /// Emergency stop (latched). Defaults to a plain [`stop`](Robot::stop).
+    /// Performs the strongest stop the device allows.
+    ///
+    /// Returns `Ok` only when the controller latches the stop, so that the
+    /// robot stays stopped until
+    /// [`clear_emergency_stop`](Robot::clear_emergency_stop). A device that
+    /// cannot latch one still stops as strongly as it can, then returns an
+    /// error saying it did not latch (`roplat_rtde`'s `NoEmergencyStop` is
+    /// one); it never does less without saying so. The default is such a
+    /// device: it calls [`stop`](Robot::stop) and, when that succeeds,
+    /// returns
+    /// [`UnprocessableInstructionError`](RobotException::UnprocessableInstructionError).
     fn emergency_stop(&mut self) -> RobotResult<()> {
-        self.stop()
+        self.stop()?;
+        Err(RobotException::UnprocessableInstructionError(
+            "this driver cannot latch an emergency stop; it called stop instead".to_string(),
+        ))
     }
 
     /// Clear a latched emergency stop.
