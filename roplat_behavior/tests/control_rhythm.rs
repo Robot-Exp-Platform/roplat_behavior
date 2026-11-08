@@ -171,7 +171,7 @@ async fn domain_and_device_cleanup_failures_are_both_retained() {
         matches!(session.domain, Some(ControlDomainExit::Failed(RoplatError::Node(ref s))) if s.to_string() == "original")
     );
     assert!(
-        matches!(session.device, RobotException::CommandException(ref s) if s.to_string() == "cleanup failed")
+        matches!(session.device, RobotException::CommandException(ref s) if s == "cleanup failed")
     );
     assert_eq!(nodes, 8);
 }

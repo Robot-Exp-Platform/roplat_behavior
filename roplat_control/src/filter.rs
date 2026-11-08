@@ -161,7 +161,7 @@ mod tests {
         let y = filter.step([2.0, 0.0]);
         let g = filter.gain();
         assert!((y[0] - (g * 2.0 + (1.0 - g) * 1.0)).abs() < 1e-12);
-        assert!((y[1] - (1.0 - g) * -1.0).abs() < 1e-12);
+        assert!((y[1] + (1.0 - g)).abs() < 1e-12);
         assert_eq!(filter.blend(&[0.0, 0.0], &[1.0, 1.0]), [g, g]);
         filter.reset();
         assert_eq!(filter.step([5.0, 5.0]), [5.0, 5.0]);
