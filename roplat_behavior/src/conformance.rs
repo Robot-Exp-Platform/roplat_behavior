@@ -10,7 +10,8 @@
 //! and stamps do not go back, values are finite, an IMU orientation is a unit
 //! quaternion, an IMU at rest reads gravity up in its world frame, a lidar
 //! leaves out rays without a return and stamps a scan
-//! with its earliest return, a tared static sensor reads zero, a gripper
+//! with its earliest return, a GNSS fix has a position exactly when it has a
+//! solution, a tared static sensor reads zero, a gripper
 //! reaches the widths it is sent, an arm's declared joint envelope is
 //! coherent, and a real-time control session stops calling back once it is
 //! told to.
@@ -24,7 +25,8 @@ use roplat_msgs::{GripperCommand, Header, Imu};
 
 use crate::ControlExit;
 use crate::{
-    ControlSpace, ControlWith, ForceTorqueSensor, Gripper, ImuSensor, Joints, Lidar, RobotException,
+    ControlSpace, ControlWith, ForceTorqueSensor, GnssFix, GnssReceiver, GnssStatus, Gripper,
+    ImuSensor, Joints, Lidar, RobotException,
 };
 
 /// A broken contract promise.
@@ -319,6 +321,88 @@ pub fn check_lidar<L: Lidar>(
         headers.push(header);
     }
     check_header_stream(CHECK, &headers)
+}
+
+/// Reads `fixes` fixes with `advance` between them: header stream, finite
+/// values, latitude in `[-90, 90]` and longitude in `[-180, 180]`, a position
+/// exactly when the status is not `NoFix`, uncertainties and a correction age
+/// that are not negative, and a time of week below one week. Where the
+/// antenna really is needs a known scene, so the driver's own tests check it.
+pub fn check_gnss<G: GnssReceiver>(
+    receiver: &mut G,
+    mut advance: impl FnMut(),
+    fixes: usize,
+) -> Result<(), Violation> {
+    const CHECK: &str = "gnss";
+    let mut headers = Vec::with_capacity(fixes);
+    for _ in 0..fixes {
+        advance();
+        let reading = receiver.read_fix().map_err(|e| device(CHECK, e))?;
+        check_gnss_fix(CHECK, &reading.value)?;
+        headers.push(reading.header);
+    }
+    check_header_stream(CHECK, &headers)
+}
+
+fn check_gnss_fix(check: &'static str, fix: &GnssFix) -> Result<(), Violation> {
+    const WEEK_NS: u64 = 604_800 * 1_000_000_000;
+    match (fix.status, fix.position) {
+        (GnssStatus::NoFix, Some(p)) => {
+            return Err(violation(
+                "gnss: no fix",
+                format!("a NoFix epoch carries the position {p:?}"),
+            ));
+        }
+        (status, None) if status != GnssStatus::NoFix => {
+            return Err(violation(
+                "gnss: no fix",
+                format!("a {status:?} fix carries no position"),
+            ));
+        }
+        _ => {}
+    }
+    if let Some(p) = fix.position
+        && !(p.ellipsoidal_height.is_finite()
+            && (-90.0..=90.0).contains(&p.latitude)
+            && (-180.0..=180.0).contains(&p.longitude))
+    {
+        return Err(violation(
+            check,
+            format!("position {p:?} is not finite or out of range"),
+        ));
+    }
+    if let Some(u) = fix.undulation
+        && !u.is_finite()
+    {
+        return Err(violation(check, format!("non-finite undulation {u}")));
+    }
+    if let Some(v) = fix.velocity_enu
+        && !v.iter().all(|c| c.is_finite())
+    {
+        return Err(violation(check, format!("non-finite velocity {v:?}")));
+    }
+    if let Some(s) = fix.sigma_enu
+        && !s.iter().all(|c| c.is_finite() && *c >= 0.0)
+    {
+        return Err(violation(
+            check,
+            format!("sigma {s:?} is not finite and non-negative"),
+        ));
+    }
+    if let Some(age) = fix.correction_age
+        && !(age.is_finite() && age >= 0.0)
+    {
+        return Err(violation(check, format!("correction age {age} s")));
+    }
+    if let Some(time) = fix.gps_time
+        && time.tow_ns >= WEEK_NS
+    {
+        return Err(violation(
+            check,
+            format!("time of week {} ns is not below one week", time.tow_ns),
+        ));
+    }
+    Ok(())
 }
 
 /// Opens the gripper to each of `widths` (scaled by the reported

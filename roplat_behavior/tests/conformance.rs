@@ -7,9 +7,10 @@ use std::{cell::Cell, f64::consts::PI, rc::Rc};
 
 use nalgebra as na;
 use roplat_behavior::{
-    ForceTorqueSensor, Gripper, ImuSensor, Joints, Lidar, LidarPoint, RobotResult,
+    ForceTorqueSensor, Geodetic, GnssFix, GnssReceiver, GnssStatus, GpsTime, Gripper, ImuSensor,
+    Joints, Lidar, LidarPoint, RobotResult,
     conformance::{
-        AtRest, check_force_torque_sensor, check_gripper, check_imu, check_imu_at_rest,
+        AtRest, check_force_torque_sensor, check_gnss, check_gripper, check_imu, check_imu_at_rest,
         check_joints, check_lidar,
     },
     frd_to_flu,
@@ -188,6 +189,89 @@ fn imu_at_rest_checks() {
         .with_orientation(frd.into())
         .with_linear_acceleration(at_rest_in(frd, 9.81));
     check(turned_body).unwrap();
+}
+
+/// A receiver that sends the same fix every epoch, its `seq` rising by
+/// `step`.
+struct MockGnss {
+    seq: u64,
+    step: u64,
+    fix: GnssFix,
+}
+
+impl GnssReceiver for MockGnss {
+    fn read_fix(&mut self) -> RobotResult<Stamped<GnssFix>> {
+        self.seq += self.step;
+        let header = Header::new(
+            Stamp::new(clock::SIMULATION, self.seq as i64),
+            FrameId::new(2),
+            self.seq,
+        );
+        Ok(Stamped::new(header, self.fix))
+    }
+}
+
+#[test]
+fn gnss_checks() {
+    let check = |fix| {
+        let mut receiver = MockGnss { seq: 0, step: 1, fix };
+        check_gnss(&mut receiver, || {}, 3).map_err(|e| e.check)
+    };
+    let antenna = Geodetic { latitude: 40.0, longitude: 116.3, ellipsoidal_height: 52.0 };
+    let rtk = GnssFix {
+        status: GnssStatus::RtkFixed,
+        position: Some(antenna),
+        undulation: Some(-9.0),
+        velocity_enu: Some([0.1, 0.0, 0.0]),
+        sigma_enu: Some([0.01, 0.01, 0.02]),
+        satellites: Some(24),
+        correction_age: Some(1.0),
+        gps_time: Some(GpsTime { week: 2444, tow_ns: 3_600_000_000_000 }),
+    };
+    check(rtk).unwrap();
+    // An epoch without a solution comes back with no position.
+    check(GnssFix::NO_FIX).unwrap();
+    let dead_reckoning = GnssFix {
+        status: GnssStatus::DeadReckoning,
+        position: Some(antenna),
+        ..GnssFix::NO_FIX
+    };
+    check(dead_reckoning).unwrap();
+
+    // A position exactly when there is a solution.
+    let lost = GnssFix { position: None, ..rtk };
+    assert_eq!(check(lost), Err("gnss: no fix"));
+    let made_up = GnssFix { status: GnssStatus::NoFix, ..rtk };
+    assert_eq!(check(made_up), Err("gnss: no fix"));
+
+    // Ranges and finite values.
+    for position in [
+        Geodetic { latitude: 90.5, ..antenna },
+        Geodetic { longitude: -180.5, ..antenna },
+        Geodetic { latitude: f64::NAN, ..antenna },
+        Geodetic { ellipsoidal_height: f64::INFINITY, ..antenna },
+    ] {
+        let fix = GnssFix { position: Some(position), ..rtk };
+        assert_eq!(check(fix), Err("gnss"), "{position:?}");
+    }
+    let broken = [
+        GnssFix { undulation: Some(f64::NAN), ..rtk },
+        GnssFix { velocity_enu: Some([0.0, f64::NAN, 0.0]), ..rtk },
+        GnssFix { sigma_enu: Some([0.01, -0.01, 0.02]), ..rtk },
+        GnssFix { correction_age: Some(-1.0), ..rtk },
+        GnssFix {
+            gps_time: Some(GpsTime { week: 2444, tow_ns: 604_800_000_000_000 }),
+            ..rtk
+        },
+    ];
+    for fix in broken {
+        assert_eq!(check(fix), Err("gnss"), "{fix:?}");
+    }
+
+    // The header stream: seq must rise.
+    let mut stuck = MockGnss { seq: 1, step: 0, fix: rtk };
+    let e = check_gnss(&mut stuck, || {}, 2).unwrap_err();
+    assert!(e.detail.contains("seq did not rise"), "{e}");
 }
 
 /// A gripper that reaches each commanded width, or ignores commands.
