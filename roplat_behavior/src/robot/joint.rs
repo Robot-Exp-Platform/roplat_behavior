@@ -11,6 +11,25 @@ use crate::JointLimits;
 ///
 /// `Joints<N>` is a super-trait of [`Arm<N>`](crate::Arm).
 ///
+/// # Joint convention
+///
+/// Joint positions, and the velocities, efforts and limits that go with them,
+/// follow the robot's kinematic description, its URDF or serial chain: each
+/// joint gives its child link relative to its parent link, with the zero and
+/// sign the description defines, not a controller's internal convention. A
+/// driver whose controller couples joints differently converts in both
+/// directions, readings and commands, and documents the conversion. FANUC,
+/// for example, reports J3 relative to the horizontal, so J2 and J3 are
+/// coupled. For a linear coupling `q = A q_c` from the controller's
+/// coordinates `q_c`, velocities convert with `A` and efforts with the
+/// inverse transpose of `A`, so that power is the same in both.
+///
+/// [`JOINT_LIMITS`](Joints::JOINT_LIMITS),
+/// [`JOINT_DEFAULT`](Joints::JOINT_DEFAULT) and
+/// [`JOINT_PACKED`](Joints::JOINT_PACKED) are in the same serial convention.
+/// A controller limit on a coupled coordinate is not a box in the serial
+/// convention, so the driver documents how it chose the box it declares.
+///
 /// # Example
 /// ```ignore
 /// use roplat_behavior::{JointLimits, Joints, to_radians_array};
