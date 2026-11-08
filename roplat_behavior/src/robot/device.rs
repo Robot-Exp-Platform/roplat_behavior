@@ -8,7 +8,7 @@
 use std::f64::consts::FRAC_1_SQRT_2;
 
 use roplat_msgs::{
-    CameraInfo, ForceTorque, GripperCommand, GripperState, Header, Imu, Quaternion, Stamped,
+    CameraInfo, ForceTorque, GripperCommand, GripperState, Header, Imu, Pose, Quaternion, Stamped,
     Vector3,
 };
 
@@ -418,4 +418,55 @@ pub struct Heading {
 pub trait GnssHeading {
     /// Blocks for the next epoch with a heading solution.
     fn read_heading(&mut self) -> RobotResult<Stamped<Heading>>;
+}
+
+/// One rigid body of a [`MotionCapture`] frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrackedBody {
+    /// The body's identifier, as the system or the driver's options assign
+    /// it; unique within a frame.
+    pub id: u32,
+    /// The pose of the body's frame (the pivot the system defines for it) in
+    /// the capture world; `None` when the system reports the body in this
+    /// frame but could not track it.
+    pub pose: Option<Pose>,
+    /// The mean distance between the body's markers and their modelled
+    /// positions, metres, when the system reports one for a tracked body.
+    pub error: Option<f64>,
+}
+
+/// A motion-capture system that delivers frames of rigid-body poses.
+///
+/// # Capture world
+///
+/// Poses are in one right-handed world frame fixed by the system's ground
+/// calibration, in metres:
+///
+/// - +Z points up, against gravity;
+/// - +X and +Y lie in the ground plane, as the calibration placed them.
+///
+/// A driver whose server streams another up axis (OptiTrack Motive streams
+/// +Y up by default) rotates positions and orientations into this frame and
+/// documents the rotation; it never mirrors them. Indoor systems have no
+/// east or north: placing the world on a site map is the application's
+/// transform, not the driver's.
+///
+/// # Frames
+///
+/// A frame holds the bodies the system reported for one instant. That may be
+/// every defined body, as NatNet sends, or one tracker report, as VRPN sends.
+/// A body the system reports as lost has `pose: None`; a body the system
+/// leaves out of the frame is absent from it.
+///
+/// The header's stamp is when the poses were measured, on the clock the
+/// driver stamps with; each driver documents how it places the device's
+/// time there. Stamps never go back, `seq` rises with every frame, and
+/// `frame` names the capture world.
+pub trait MotionCapture {
+    /// Blocks for the next frame, replaces the contents of `bodies` with its
+    /// rigid bodies, and returns its header.
+    ///
+    /// The buffer belongs to the caller, so a loop that reuses it allocates
+    /// only when a frame outgrows every frame before it.
+    fn read_frame(&mut self, bodies: &mut Vec<TrackedBody>) -> RobotResult<Header>;
 }

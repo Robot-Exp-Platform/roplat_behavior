@@ -9,6 +9,7 @@ pub mod limits;
 pub mod math;
 pub mod model;
 pub mod motion;
+pub mod multirotor;
 pub mod observe;
 pub mod spaces;
 pub mod state;
@@ -24,7 +25,8 @@ pub use control::{
 };
 pub use device::{
     Camera, ForceTorqueSensor, Geodetic, GnssFix, GnssHeading, GnssReceiver, GnssStatus, GpsTime,
-    Gripper, Heading, ImuSensor, Lidar, LidarPoint, frd_to_flu, ned_frd_to_enu_flu, ned_to_enu,
+    Gripper, Heading, ImuSensor, Lidar, LidarPoint, MotionCapture, TrackedBody, frd_to_flu,
+    ned_frd_to_enu_flu, ned_to_enu,
 };
 pub use endpoint::{EndPoint, EndPointPose};
 pub use joint::Joints;
@@ -35,6 +37,7 @@ pub use model::{
     JacobianModel, SpaceMap,
 };
 pub use motion::{Motion, MotionFile, MoveTo, MoveTraj, Space};
+pub use multirotor::{LandedState, Multirotor, MultirotorState, PositionSetpoint};
 pub use observe::{ControlObservation, ControlObserver};
 pub use roplat_msgs::{CartesianLimits, JointLimits, LoadState};
 pub use spaces::{

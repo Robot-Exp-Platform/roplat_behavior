@@ -38,11 +38,13 @@ pub mod behavior {
         Geodetic, GnssFix, GnssHeading, GnssReceiver, GnssStatus, GpsTime, GravityInput,
         GravityInputSpace, Gripper, HandSpace, Heading, Humanoid, HumanoidState, ImuSensor,
         InverseKinematics, JacobianModel, JacobianSpace, JointLimits, JointPositionControl,
-        JointSample, JointSpace, JointState, JointTorqueSpace, JointVelocityControl, Joints, Lidar,
-        LidarPoint, LoadState, MassMatrixSpace, MobileBase, MobileBaseState, Motion, MotionFile,
-        MotionLimits, Pose, Quadruped, QuadrupedState, Relative, RelativeSpace, Robot,
+        JointSample, JointSpace, JointState, JointTorqueSpace, JointVelocityControl, Joints,
+        LandedState, Lidar, LidarPoint, LoadState, MassMatrixSpace, MobileBase, MobileBaseState,
+        Motion, MotionCapture, MotionFile, MotionLimits, Multirotor, MultirotorState, Pose,
+        PositionSetpoint, Quadruped, QuadrupedState, Relative, RelativeSpace, Robot,
         RobotDescription, Space, SpaceMap, SpatialSample, StateView, TcpSpace, TorqueControl,
-        VelocityControlledBase, WholeBodyJointSpace, WholeBodyTorqueSpace, WholeBodyVelocitySpace,
+        TrackedBody, VelocityControlledBase, WholeBodyJointSpace, WholeBodyTorqueSpace,
+        WholeBodyVelocitySpace,
     };
 
     pub use crate::simulation::{ModelFormat, SimulationModel};

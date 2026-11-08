@@ -1,7 +1,7 @@
 //! The end-effector and sensor contracts compose without a `Robot` impl and
 //! carry the producer's clock and frame.
 
-use std::f64::consts::FRAC_PI_2;
+use std::{f64::consts::FRAC_PI_2, time::Duration};
 
 use nalgebra as na;
 use roplat_behavior::behavior::{Camera, ForceTorqueSensor, Gripper, ImuSensor, Lidar, LidarPoint};
@@ -9,7 +9,7 @@ use roplat_behavior::msgs::{
     CameraInfo, Clock, ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu,
     ManualClock, Quaternion, Stamped, Vector3, Wrench,
 };
-use roplat_behavior::{RobotResult, frd_to_flu, ned_frd_to_enu_flu, ned_to_enu};
+use roplat_behavior::{MultirotorState, RobotResult, frd_to_flu, ned_frd_to_enu_flu, ned_to_enu};
 
 struct Hand {
     state: GripperState,
@@ -266,4 +266,24 @@ fn imu_orientation_heads_from_east_and_turns_right_handed() {
     let nose_up = ned_frd_to_enu_flu(ned_frd(0.0, FRAC_PI_2, 0.0));
     assert!(close(rotate(nose_up, X), Z));
     assert!(close(rotate(nose_up, Z), Vector3::new(0.0, -1.0, 0.0)));
+}
+
+#[test]
+fn a_multirotor_yaw_runs_from_east_like_the_imu_orientation() {
+    // An autopilot heading 30 degrees east of north, level, relative to NED.
+    let heading = 30f64.to_radians();
+    let orientation = ned_frd_to_enu_flu(ned_frd(0.0, 0.0, heading));
+    let state = MultirotorState {
+        device_time: Duration::ZERO,
+        position: Vector3::ZERO,
+        velocity: None,
+        orientation: Some(orientation),
+        angular_velocity: None,
+        armed: None,
+        landed: None,
+    };
+    // Counter-clockwise from east: 90 degrees minus the heading.
+    let yaw = state.yaw().unwrap();
+    assert!((yaw - (FRAC_PI_2 - heading)).abs() < 1e-12, "{yaw}");
+    assert_eq!(MultirotorState { orientation: None, ..state }.yaw(), None);
 }
