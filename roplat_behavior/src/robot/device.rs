@@ -231,17 +231,29 @@ pub fn yaw_ned_to_enu(yaw: f64) -> f64 {
 /// # Depth
 ///
 /// A depth frame gives each pixel the distance in metres along the optical
-/// axis to the surface the pixel sees: the point's `z`, not its range along
-/// the pixel's ray. A device that measures the range along the ray, as many
-/// time-of-flight cameras do, has its driver convert it with the intrinsics
-/// and document that it does.
+/// axis to the surface the pixel sees: the point's `z`, not its range `r`
+/// along the pixel's ray. A device that measures the range, as many
+/// time-of-flight cameras do, has its driver convert it with the intrinsics,
+/// `z = r / sqrt(1 + x² + y²)` with `(x, y)` the pixel's undistorted
+/// normalised coordinates, and document that it does.
 ///
-/// A pixel without a depth, because nothing is in range or the measurement
-/// failed, is missing. The driver's frame type marks it as `None`, or as NaN
-/// or infinity in floating-point samples, and documents which; never as a
-/// finite number such as 0 m or the far limit. A device that marks missing
-/// pixels with a number in its raw samples, as Z16 does with 0, has its
-/// driver report them missing wherever it gives metres.
+/// A pixel has a depth or is missing: the contract has one missing value.
+/// A pixel is missing when the device measured nothing there, when the
+/// measurement failed or was rejected, and when the surface lies outside the
+/// range the device measures, nearer or farther: such a depth is missing,
+/// never clamped to the range's limit. The driver's frame type marks missing
+/// pixels as `None`, or as NaN or infinity in floating-point samples, and
+/// documents which; never as a finite number such as 0 m or the far limit. A
+/// device that marks missing pixels with a number in its raw samples, as Z16
+/// does with 0, has its driver report them missing wherever it gives metres.
+///
+/// There is one missing value because devices do not tell "nothing within
+/// range" from a failed measurement alike, or at all: a time-of-flight
+/// camera cannot tell a far surface from a dark one. Reading a missing pixel
+/// as free space up to the far limit is the caller's assumption, which the
+/// contract cannot make true. A driver whose device gives a reason (too
+/// near, saturated, low signal) keeps it in its frame type beside the depth;
+/// an infinity promises nothing more than missing.
 ///
 /// # Stamps
 ///
