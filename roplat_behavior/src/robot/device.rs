@@ -15,6 +15,17 @@ use roplat_msgs::{
 use crate::{RobotException, RobotResult};
 
 /// A parallel or adaptive gripper driven by width, speed and force.
+///
+/// A [`GripperCommand`] field the device cannot set, such as the speed of an
+/// OnRobot RG gripper, is ignored, and the driver documents which. A gripper
+/// that grips by direction until contact rather than to a width, as Schunk's
+/// grip commands do, takes `width` as the target that gives the direction:
+/// it closes towards a width below the current one and opens towards one
+/// above, and the driver documents how far it then moves.
+///
+/// Acknowledging a device fault is [`Robot::reset`](crate::Robot::reset) on
+/// the type that owns the connection, not
+/// [`home_gripper`](Self::home_gripper).
 pub trait Gripper {
     fn read_gripper(&mut self) -> RobotResult<GripperState>;
 
@@ -22,7 +33,8 @@ pub trait Gripper {
     /// when the motion ends; `GripperState::grasped` reports the outcome.
     fn move_gripper(&mut self, command: GripperCommand) -> RobotResult<()>;
 
-    /// Calibrates the finger range, when the device needs it.
+    /// Calibrates the finger range, when the device needs it. It does not
+    /// acknowledge faults.
     fn home_gripper(&mut self) -> RobotResult<()> {
         Ok(())
     }
