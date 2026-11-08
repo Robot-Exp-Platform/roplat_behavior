@@ -93,7 +93,10 @@ pub fn check_header_stream(check: &'static str, headers: &[Header]) -> Result<()
 /// Reads `samples` wrenches with `advance` between them. With
 /// `static_load`, the sensor's load must not change while the check runs:
 /// if the device supports [`bias_wrench`](ForceTorqueSensor::bias_wrench),
-/// the next reading must then be zero within `tolerance` on every axis.
+/// the next reading must then be zero within `tolerance` on every axis. A
+/// device without one answers
+/// [`NotSupported`](RobotException::NotSupported) or, as the default does,
+/// `UnprocessableInstructionError`.
 pub fn check_force_torque_sensor<S: ForceTorqueSensor>(
     sensor: &mut S,
     mut advance: impl FnMut(),
@@ -118,7 +121,10 @@ pub fn check_force_torque_sensor<S: ForceTorqueSensor>(
 
     if static_load {
         match sensor.bias_wrench() {
-            Err(RobotException::UnprocessableInstructionError(_)) => {}
+            Err(
+                RobotException::NotSupported { .. }
+                | RobotException::UnprocessableInstructionError(_),
+            ) => {}
             Err(e) => return Err(device(CHECK, e)),
             Ok(()) => {
                 advance();

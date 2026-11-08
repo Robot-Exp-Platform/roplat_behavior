@@ -56,7 +56,8 @@ pub trait MoveTo<S: Space>: Robot {
 ///
 /// Path sampling and waypoint interpolation are the driver's: `move_path` and
 /// `move_waypoints` are required, and a driver without a planner returns
-/// `NotSupported` from them. Both funnel into its own `move_traj`.
+/// [`NotSupported`](RobotException::NotSupported) from them. Both funnel into
+/// its own `move_traj`.
 pub trait MoveTraj<S: Space>: Robot {
     /// Follow a dense, already-sampled trajectory. The base primitive every
     /// other trajectory entry point reduces to.

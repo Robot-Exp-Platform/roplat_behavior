@@ -81,6 +81,10 @@ pub trait Robot {
     /// channel's cycle period. A driver without one, which moves only point to
     /// point (Yaskawa HSES, for example), gives the period at which it
     /// refreshes the robot's state. The driver documents which.
+    ///
+    /// That this is a compile-time constant is planned to change: the period
+    /// is to become configurable, so code should not rely on it being fixed
+    /// per driver type.
     const CONTROL_PERIOD: Duration;
 
     /// Driver / firmware version string.
@@ -147,17 +151,14 @@ pub trait Robot {
     /// Returns `Ok` only when the controller latches the stop, so that the
     /// robot stays stopped until
     /// [`clear_emergency_stop`](Robot::clear_emergency_stop). A device that
-    /// cannot latch one still stops as strongly as it can, then returns an
-    /// error saying it did not latch (`roplat_rtde`'s `NoEmergencyStop` is
-    /// one); it never does less without saying so. The default is such a
-    /// device: it calls [`stop`](Robot::stop) and, when that succeeds,
-    /// returns
-    /// [`UnprocessableInstructionError`](RobotException::UnprocessableInstructionError).
+    /// cannot latch one still stops as strongly as it can, then returns
+    /// [`NoEmergencyStop`](RobotException::NoEmergencyStop); it never does
+    /// less without saying so. The default is such a device: it calls
+    /// [`stop`](Robot::stop) and, when that succeeds, returns
+    /// `NoEmergencyStop`.
     fn emergency_stop(&mut self) -> RobotResult<()> {
         self.stop()?;
-        Err(RobotException::UnprocessableInstructionError(
-            "this driver cannot latch an emergency stop; it called stop instead".to_string(),
-        ))
+        Err(RobotException::NoEmergencyStop)
     }
 
     /// Clear a latched emergency stop.

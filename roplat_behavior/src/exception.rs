@@ -70,6 +70,17 @@ pub enum RobotException {
     /// unwarp error
     #[error("UnWarp error: {0}")]
     UnWarpError(String),
+
+    /// The device cannot do `operation` at all: it has no such function, or
+    /// the driver offers none. Retrying, or another argument, does not help.
+    #[error("{operation} is not supported by this device")]
+    NotSupported { operation: &'static str },
+
+    /// The robot stopped, but the device cannot latch an emergency stop, so
+    /// nothing keeps it stopped; see
+    /// [`Robot::emergency_stop`](crate::Robot::emergency_stop).
+    #[error("the robot stopped but cannot latch an emergency stop")]
+    NoEmergencyStop,
 }
 
 /// A convenient alias for `Result<T, `[`RobotException`]`>`.
