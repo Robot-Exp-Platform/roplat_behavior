@@ -31,14 +31,10 @@ pub trait MoveTo<S: Space>: Robot {
     /// caller polls or awaits it.
     ///
     /// Drivers should implement this only when they have a real async backend.
-    /// The default reports that async motion is not supported; it deliberately
-    /// does not wrap the blocking [`MoveTo::move_to`] path.
+    /// The default resolves to [`NotSupported`](RobotException::NotSupported);
+    /// it deliberately does not wrap the blocking [`MoveTo::move_to`] path.
     fn move_to_async(&mut self, _target: S::Value) -> impl Future<Output = RobotResult<()>> {
-        async {
-            Err(RobotException::UnprocessableInstructionError(
-                "async target motion is not implemented for this driver".to_string(),
-            ))
-        }
+        async { Err(RobotException::NotSupported { operation: "move_to_async" }) }
     }
 }
 
@@ -56,7 +52,8 @@ pub trait MoveTo<S: Space>: Robot {
 ///
 /// Path sampling and waypoint interpolation are the driver's: `move_path` and
 /// `move_waypoints` are required, and a driver without a planner returns
-/// `NotSupported` from them. Both funnel into its own `move_traj`.
+/// [`NotSupported`](RobotException::NotSupported) from them. Both funnel into
+/// its own `move_traj`.
 pub trait MoveTraj<S: Space>: Robot {
     /// Follow a dense, already-sampled trajectory. The base primitive every
     /// other trajectory entry point reduces to.

@@ -66,9 +66,7 @@ impl ForceTorqueSensor for MockForceTorque {
 
     fn bias_wrench(&mut self) -> RobotResult<()> {
         if !self.supports_bias {
-            return Err(
-                roplat_behavior::RobotException::UnprocessableInstructionError("no tare".into()),
-            );
+            return Err(roplat_behavior::RobotException::NotSupported { operation: "bias_wrench" });
         }
         if !self.ignore_bias {
             self.bias = Some(self.load);
