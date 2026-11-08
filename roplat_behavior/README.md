@@ -89,7 +89,7 @@ For an exit without an algorithm command, use `control_with_flow` and return a `
 | `ControlFlow::Continue((command, true))` | Send this final command; complete normally. |
 | `ControlFlow::Break(())` | Send no algorithm command for this cycle; perform the driver's session termination. |
 
-Termination depends on the device protocol. `Break` does not prescribe a zero command or represent an emergency stop.
+Termination depends on the device protocol. `Break` does not prescribe a zero command or represent an emergency stop. After a session that returns `Ok`, an arm holds still without drifting and takes the next motion call without `enable`; the driver documents the controller mode it leaves.
 
 There are two different uses of async:
 
