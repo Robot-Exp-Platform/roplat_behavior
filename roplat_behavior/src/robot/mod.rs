@@ -22,7 +22,7 @@ pub use control::{
     CartesianVelocityControl, Control, ControlExit, ControlSpace, ControlStep, ControlWith,
     JointPositionControl, JointVelocityControl, TorqueControl,
 };
-pub use device::{Camera, ForceTorqueSensor, Gripper, ImuSensor};
+pub use device::{Camera, ForceTorqueSensor, Gripper, ImuSensor, Lidar, LidarPoint};
 pub use endpoint::{EndPoint, EndPointPose};
 pub use joint::Joints;
 pub use limits::MotionLimits;

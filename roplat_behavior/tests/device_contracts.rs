@@ -2,7 +2,7 @@
 //! carry the producer's clock and frame.
 
 use roplat_behavior::RobotResult;
-use roplat_behavior::behavior::{Camera, ForceTorqueSensor, Gripper, ImuSensor};
+use roplat_behavior::behavior::{Camera, ForceTorqueSensor, Gripper, ImuSensor, Lidar, LidarPoint};
 use roplat_behavior::msgs::{
     CameraInfo, Clock, ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu,
     ManualClock, Stamped, Vector3, Wrench,
@@ -103,4 +103,58 @@ fn sensor_readings_carry_clock_frame_and_order() {
     );
     assert_eq!(sensors.camera_info().width, 2);
     assert!(sensors.bias_wrench().is_err());
+}
+
+impl Lidar for Sensors<'_> {
+    /// A planar sweep from the right to the left: a wall 2 m ahead, then a
+    /// post 1 m to the left.
+    fn read_scan(&mut self, points: &mut Vec<LidarPoint>) -> RobotResult<Header> {
+        points.clear();
+        points.push(LidarPoint {
+            position: [2.0, 0.0, 0.0],
+            offset_ns: 0,
+            intensity: Some(80.0),
+            ring: Some(0),
+        });
+        points.push(LidarPoint {
+            position: [0.0, 1.0, 0.0],
+            offset_ns: 6_250_000,
+            intensity: None,
+            ring: Some(0),
+        });
+        Ok(self.header(10))
+    }
+}
+
+/// The range and azimuth of the nearest return, from any lidar.
+fn nearest(lidar: &mut impl Lidar, points: &mut Vec<LidarPoint>) -> RobotResult<(f64, f64)> {
+    lidar.read_scan(points)?;
+    let [x, y, _] = points
+        .iter()
+        .min_by(|a, b| range(a).total_cmp(&range(b)))
+        .expect("the scan has returns")
+        .position;
+    Ok((x.hypot(y), y.atan2(x)))
+}
+
+fn range(point: &LidarPoint) -> f64 {
+    point.position.iter().map(|c| c * c).sum::<f64>().sqrt()
+}
+
+#[test]
+fn lidar_scans_share_one_frame_convention_and_buffer() {
+    let sim = ManualClock::simulation();
+    let mut sensors = Sensors { clock: &sim, seq: 0 };
+    let mut points = Vec::new();
+
+    // +Y is left: the post 1 m to the left is at azimuth +90°.
+    let (distance, azimuth) = nearest(&mut sensors, &mut points).unwrap();
+    assert_eq!(distance, 1.0);
+    assert_eq!(azimuth, std::f64::consts::FRAC_PI_2);
+
+    let capacity = points.capacity();
+    let header = sensors.read_scan(&mut points).unwrap();
+    assert_eq!(points.len(), 2);
+    assert_eq!(points.capacity(), capacity);
+    assert_eq!((header.frame, header.seq), (FrameId::new(10), 2));
 }

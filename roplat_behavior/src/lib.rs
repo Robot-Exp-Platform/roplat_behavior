@@ -37,11 +37,11 @@ pub mod behavior {
         FlangeSpace, FootSpace, ForceTorqueSensor, ForwardKinematics, GaitCommand, GaitSpace,
         GravityInput, GravityInputSpace, Gripper, HandSpace, Humanoid, HumanoidState, ImuSensor,
         InverseKinematics, JacobianModel, JacobianSpace, JointLimits, JointPositionControl,
-        JointSample, JointSpace, JointState, JointTorqueSpace, JointVelocityControl, Joints,
-        LoadState, MassMatrixSpace, MobileBase, MobileBaseState, Motion, MotionFile, MotionLimits,
-        Pose, Quadruped, QuadrupedState, Relative, RelativeSpace, Robot, RobotDescription, Space,
-        SpaceMap, SpatialSample, StateView, TcpSpace, TorqueControl, WholeBodyJointSpace,
-        WholeBodyTorqueSpace, WholeBodyVelocitySpace,
+        JointSample, JointSpace, JointState, JointTorqueSpace, JointVelocityControl, Joints, Lidar,
+        LidarPoint, LoadState, MassMatrixSpace, MobileBase, MobileBaseState, Motion, MotionFile,
+        MotionLimits, Pose, Quadruped, QuadrupedState, Relative, RelativeSpace, Robot,
+        RobotDescription, Space, SpaceMap, SpatialSample, StateView, TcpSpace, TorqueControl,
+        WholeBodyJointSpace, WholeBodyTorqueSpace, WholeBodyVelocitySpace,
     };
 
     pub use crate::simulation::{ModelFormat, SimulationModel};
