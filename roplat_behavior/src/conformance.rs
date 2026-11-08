@@ -8,7 +8,8 @@
 //! The checks cover what the contracts promise for every implementation:
 //! readings of one sensor share a clock and a frame, sequence numbers rise
 //! and stamps do not go back, values are finite, an IMU orientation is a unit
-//! quaternion, a lidar leaves out rays without a return and stamps a scan
+//! quaternion, an IMU at rest reads gravity up in its world frame, a lidar
+//! leaves out rays without a return and stamps a scan
 //! with its earliest return, a tared static sensor reads zero, a gripper
 //! reaches the widths it is sent, an arm's declared joint envelope is
 //! coherent, and a real-time control session stops calling back once it is
@@ -18,6 +19,7 @@
 
 use std::{fmt, ops::ControlFlow, time::Duration};
 
+use nalgebra as na;
 use roplat_msgs::{GripperCommand, Header, Imu};
 
 use crate::ControlExit;
@@ -131,41 +133,148 @@ pub fn check_force_torque_sensor<S: ForceTorqueSensor>(
 }
 
 /// Reads `samples` IMU messages with `advance` between them: header stream,
-/// finite present fields, unit orientation, and a mask that never sets bits
-/// the message does not define.
+/// a mask that never sets bits the message does not define, finite present
+/// fields, and a unit orientation. These hold in every scene; whether the
+/// readings keep the axes of [`ImuSensor`] needs a known scene, so the
+/// driver's own simulation tests check them.
 pub fn check_imu<S: ImuSensor>(
     sensor: &mut S,
     mut advance: impl FnMut(),
     samples: usize,
 ) -> Result<(), Violation> {
     const CHECK: &str = "imu";
-    let known = Imu::ORIENTATION | Imu::ANGULAR_VELOCITY | Imu::LINEAR_ACCELERATION;
     let mut headers = Vec::with_capacity(samples);
     for _ in 0..samples {
         advance();
         let reading = sensor.read_imu().map_err(|e| device(CHECK, e))?;
-        let imu = reading.value;
-        if imu.valid_mask() & !known != 0 {
-            return Err(violation(
-                CHECK,
-                format!("unknown mask bits {:#x}", imu.valid_mask()),
-            ));
+        check_imu_reading(CHECK, &reading.value)?;
+        headers.push(reading.header);
+    }
+    check_header_stream(CHECK, &headers)
+}
+
+/// What one IMU reading keeps in every scene: known mask bits, finite
+/// present fields, a unit orientation.
+fn check_imu_reading(check: &'static str, imu: &Imu) -> Result<(), Violation> {
+    let known = Imu::ORIENTATION | Imu::ANGULAR_VELOCITY | Imu::LINEAR_ACCELERATION;
+    if imu.valid_mask() & !known != 0 {
+        return Err(violation(
+            check,
+            format!("unknown mask bits {:#x}", imu.valid_mask()),
+        ));
+    }
+    if let Some(q) = imu.orientation() {
+        if !q.to_xyzw().iter().all(|c| c.is_finite()) {
+            return Err(violation(check, format!("non-finite orientation {q:?}")));
         }
-        if let Some(q) = imu.orientation() {
-            let norm = (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w).sqrt();
-            if !norm.is_finite() || (norm - 1.0).abs() > 1e-6 {
-                return Err(violation(CHECK, format!("orientation norm {norm}")));
+        let norm = (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w).sqrt();
+        if (norm - 1.0).abs() > 1e-6 {
+            return Err(violation(check, format!("orientation norm {norm}")));
+        }
+    }
+    for v in [imu.angular_velocity(), imu.linear_acceleration()]
+        .into_iter()
+        .flatten()
+    {
+        if ![v.x, v.y, v.z].iter().all(|c| c.is_finite()) {
+            return Err(violation(check, format!("non-finite vector {v:?}")));
+        }
+    }
+    Ok(())
+}
+
+/// The scene of [`check_imu_at_rest`]: a device held still, in a pose nobody
+/// needs to know, under gravity of magnitude `gravity`, and how far its
+/// readings may stray from what such a device reads.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AtRest {
+    /// m/s²: about 9.78 to 9.83 on Earth, the world's setting in a simulator.
+    pub gravity: f64,
+    /// m/s²: the largest distance between a specific force and the one at
+    /// rest, noise and bias included.
+    pub acceleration_tolerance: f64,
+    /// rad/s: the largest angular speed a reading may show, noise, bias and
+    /// the Earth's rotation (7.3e-5 rad/s) included.
+    pub angular_velocity_tolerance: f64,
+}
+
+/// Reads `samples` IMU messages from a device at rest in any pose, with
+/// `advance` between them: everything [`check_imu`] checks, an angular speed
+/// within `rest.angular_velocity_tolerance`, and the specific force of a
+/// body at rest. With an orientation, the specific force turned into the
+/// world frame must be `(0, 0, +gravity)` within
+/// `rest.acceleration_tolerance`; without one, only its magnitude must be
+/// `gravity`. Readings without a linear acceleration are skipped, but at
+/// least one must carry it.
+///
+/// Since the pose is unknown, this checks the world frame, the sign of
+/// gravity and the units: it catches gravity removed or reversed, an
+/// acceleration left in g, an orientation relative to NED, and an
+/// acceleration and an orientation converted differently. It does not check
+/// the body axes: a body frame turned the same way in the acceleration and
+/// the orientation still passes, as does any body frame without an
+/// orientation, so the driver's known-scene tests check them. A level pose
+/// hides an orientation left FRD relative to NED next to a converted
+/// acceleration, so hold the device pitched and rolled.
+pub fn check_imu_at_rest<S: ImuSensor>(
+    sensor: &mut S,
+    mut advance: impl FnMut(),
+    samples: usize,
+    rest: AtRest,
+) -> Result<(), Violation> {
+    const CHECK: &str = "imu";
+    const GRAVITY: &str = "imu: gravity";
+    let up = na::Vector3::new(0.0, 0.0, rest.gravity);
+    let mut headers = Vec::with_capacity(samples);
+    let mut accelerations = 0;
+    for _ in 0..samples {
+        advance();
+        let reading = sensor.read_imu().map_err(|e| device(CHECK, e))?;
+        let imu = reading.value;
+        check_imu_reading(CHECK, &imu)?;
+        if let Some(w) = imu.angular_velocity() {
+            let speed = na::Vector3::from(w).norm();
+            if speed > rest.angular_velocity_tolerance {
+                return Err(violation(
+                    "imu: angular velocity",
+                    format!("a device at rest turns at {speed} rad/s"),
+                ));
             }
         }
-        for v in [imu.angular_velocity(), imu.linear_acceleration()]
-            .into_iter()
-            .flatten()
-        {
-            if ![v.x, v.y, v.z].iter().all(|c| c.is_finite()) {
-                return Err(violation(CHECK, format!("non-finite vector {v:?}")));
+        if let Some(a) = imu.linear_acceleration() {
+            accelerations += 1;
+            let a = na::Vector3::from(a);
+            if let Some(q) = imu.orientation() {
+                let world = na::UnitQuaternion::from(q) * a;
+                if (world - up).norm() > rest.acceleration_tolerance {
+                    return Err(violation(
+                        GRAVITY,
+                        format!(
+                            "at rest the specific force in the world frame is {:?} m/s², \
+                             not about [0, 0, {}]",
+                            [world.x, world.y, world.z],
+                            rest.gravity
+                        ),
+                    ));
+                }
+            } else if (a.norm() - rest.gravity).abs() > rest.acceleration_tolerance {
+                return Err(violation(
+                    GRAVITY,
+                    format!(
+                        "at rest the specific force is {} m/s², not about {}",
+                        a.norm(),
+                        rest.gravity
+                    ),
+                ));
             }
         }
         headers.push(reading.header);
+    }
+    if accelerations == 0 {
+        return Err(violation(
+            GRAVITY,
+            "no reading carried a linear acceleration",
+        ));
     }
     check_header_stream(CHECK, &headers)
 }

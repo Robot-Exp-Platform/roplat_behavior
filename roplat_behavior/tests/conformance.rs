@@ -3,15 +3,21 @@
 #![cfg(feature = "conformance")]
 
 use roplat_behavior::JointLimits;
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, f64::consts::PI, rc::Rc};
 
+use nalgebra as na;
 use roplat_behavior::{
     ForceTorqueSensor, Gripper, ImuSensor, Joints, Lidar, LidarPoint, RobotResult,
-    conformance::{check_force_torque_sensor, check_gripper, check_imu, check_joints, check_lidar},
+    conformance::{
+        AtRest, check_force_torque_sensor, check_gripper, check_imu, check_imu_at_rest,
+        check_joints, check_lidar,
+    },
+    frd_to_flu,
     msgs::{
         ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu, Quaternion, Stamp,
-        Stamped, Wrench, clock,
+        Stamped, Vector3, Wrench, clock,
     },
+    ned_frd_to_enu_flu,
 };
 
 /// A sensor under a constant load; `ticks` is the mock transport's clock,
@@ -86,9 +92,10 @@ fn force_torque_checks() {
     assert_eq!(e.check, "force_torque: bias");
 }
 
+/// An IMU that sends the same reading every time.
 struct MockImu {
     seq: u64,
-    orientation: Quaternion,
+    reading: Imu,
 }
 
 impl ImuSensor for MockImu {
@@ -99,24 +106,88 @@ impl ImuSensor for MockImu {
             FrameId::new(1),
             self.seq,
         );
-        Ok(Stamped::new(
-            header,
-            Imu::EMPTY.with_orientation(self.orientation),
-        ))
+        Ok(Stamped::new(header, self.reading))
     }
 }
 
 #[test]
 fn imu_checks() {
-    let mut good = MockImu { seq: 0, orientation: Quaternion::IDENTITY };
-    check_imu(&mut good, || {}, 4).unwrap();
+    let check = |reading| check_imu(&mut MockImu { seq: 0, reading }, || {}, 4);
+    let level = Imu::EMPTY.with_linear_acceleration(Vector3::new(0.0, 0.0, 9.81));
+    check(level.with_orientation(Quaternion::IDENTITY)).unwrap();
 
-    let mut skewed = MockImu {
-        seq: 0,
-        orientation: Quaternion { x: 0.0, y: 0.0, z: 0.0, w: 2.0 },
-    };
-    let e = check_imu(&mut skewed, || {}, 1).unwrap_err();
+    let skewed = Quaternion { x: 0.0, y: 0.0, z: 0.0, w: 2.0 };
+    let e = check(level.with_orientation(skewed)).unwrap_err();
     assert!(e.detail.contains("orientation norm 2"), "{e}");
+
+    let broken = Quaternion { x: f64::NAN, ..Quaternion::IDENTITY };
+    let e = check(level.with_orientation(broken)).unwrap_err();
+    assert!(e.detail.contains("non-finite orientation"), "{e}");
+
+    let e =
+        check(level.with_linear_acceleration(Vector3::new(0.0, f64::INFINITY, 9.81))).unwrap_err();
+    assert!(e.detail.contains("non-finite vector"), "{e}");
+}
+
+const AT_REST: AtRest = AtRest {
+    gravity: 9.81,
+    acceleration_tolerance: 0.05,
+    angular_velocity_tolerance: 1e-3,
+};
+
+/// The specific force of a body at rest, in the body frame of `pose`.
+fn at_rest_in(pose: na::UnitQuaternion<f64>, up: f64) -> Vector3 {
+    (pose.inverse() * na::Vector3::new(0.0, 0.0, up)).into()
+}
+
+#[test]
+fn imu_at_rest_checks() {
+    let check = |reading| {
+        let mut imu = MockImu { seq: 0, reading };
+        check_imu_at_rest(&mut imu, || {}, 4, AT_REST).map_err(|e| e.check)
+    };
+    // An FLU body relative to ENU, rolled, pitched and turned.
+    let pose = na::UnitQuaternion::from_euler_angles(0.4, -0.3, 2.0);
+    let still = Imu::EMPTY
+        .with_orientation(pose.into())
+        .with_linear_acceleration(at_rest_in(pose, 9.81))
+        .with_angular_velocity(Vector3::ZERO);
+    check(still).unwrap();
+    // Without an orientation only the magnitude counts.
+    let unoriented = Imu::EMPTY.with_linear_acceleration(at_rest_in(pose, 9.81));
+    check(unoriented).unwrap();
+
+    // The device's own FRD body relative to NED, not converted: up reads down.
+    let ned_frd = ned_frd_to_enu_flu(pose.into());
+    let raw = Imu::EMPTY
+        .with_orientation(ned_frd)
+        .with_linear_acceleration(at_rest_in(ned_frd.into(), -9.81));
+    assert_eq!(check(raw), Err("imu: gravity"));
+    // The acceleration converted, the orientation not.
+    let half = raw.with_linear_acceleration(frd_to_flu(at_rest_in(ned_frd.into(), -9.81)));
+    assert_eq!(check(half), Err("imu: gravity"));
+    // Gravity removed, or left in g.
+    assert_eq!(
+        check(still.with_linear_acceleration(Vector3::ZERO)),
+        Err("imu: gravity")
+    );
+    let in_g = Imu::EMPTY.with_linear_acceleration(at_rest_in(pose, 1.0));
+    assert_eq!(check(in_g), Err("imu: gravity"));
+    // No reading to check gravity with.
+    let attitude_only = Imu::EMPTY.with_orientation(pose.into());
+    assert_eq!(check(attitude_only), Err("imu: gravity"));
+    // Turning.
+    let turning = still.with_angular_velocity(Vector3::new(0.0, 0.0, 0.1));
+    assert_eq!(check(turning), Err("imu: angular velocity"));
+
+    // Not promised: a body frame turned the same way in both fields passes,
+    // so the body axes stay in the driver's known-scene tests. Here an FRD
+    // body relative to ENU.
+    let frd = pose * na::UnitQuaternion::from_axis_angle(&na::Vector3::x_axis(), PI);
+    let turned_body = Imu::EMPTY
+        .with_orientation(frd.into())
+        .with_linear_acceleration(at_rest_in(frd, 9.81));
+    check(turned_body).unwrap();
 }
 
 /// A gripper that reaches each commanded width, or ignores commands.

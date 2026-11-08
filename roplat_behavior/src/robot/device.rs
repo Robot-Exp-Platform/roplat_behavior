@@ -5,7 +5,12 @@
 //! implements them on whichever type owns the connection. Readings carry a
 //! [`Header`](crate::Header) with the producer's clock and frame.
 
-use roplat_msgs::{CameraInfo, ForceTorque, GripperCommand, GripperState, Header, Imu, Stamped};
+use std::f64::consts::FRAC_1_SQRT_2;
+
+use roplat_msgs::{
+    CameraInfo, ForceTorque, GripperCommand, GripperState, Header, Imu, Quaternion, Stamped,
+    Vector3,
+};
 
 use crate::{RobotException, RobotResult};
 
@@ -43,9 +48,123 @@ pub trait ForceTorqueSensor {
     }
 }
 
-/// An inertial measurement unit; absent fields are cleared in `Imu`'s mask.
+/// An inertial measurement unit.
+///
+/// # Body frame
+///
+/// Every implementation reports in one right-handed frame fixed to the
+/// device, with the axes of the [`Lidar`] frame, forward-left-up (FLU):
+///
+/// - +X points to the device's front, the direction its maker documents as
+///   the front, or the maker's +X axis when the maker marks axes but no
+///   front;
+/// - +Z points up, out of the top of the housing and away from its mounting
+///   face;
+/// - +Y points left, completing the frame.
+///
+/// The origin is that of the maker's own sensor frame, which each driver
+/// names, and the header's `frame` names this body frame. A driver whose
+/// device uses other axes rotates its readings into this frame and documents
+/// the rotation; it never mirrors them. A device marked forward-right-down
+/// (FRD) needs the half turn about +X that [`frd_to_flu`] applies.
+///
+/// # Readings
+///
+/// A field the device does not report is cleared in `Imu`'s mask, never
+/// filled with a stand-in value.
+///
+/// - `linear_acceleration` is the specific force in the body frame, m/s²:
+///   what an accelerometer reads. Gravity is not removed, so a device at rest
+///   reads about 9.81 m/s² pointing up, `(0, 0, +9.81)` when it is level, and
+///   a falling one reads zero. A driver whose device can also output
+///   acceleration with gravity removed reports the specific force.
+/// - `angular_velocity` is the body's rate of turn in the body frame, rad/s:
+///   what a gyroscope reads. The frame is right-handed, so turning left
+///   (counter-clockwise seen from above) reads positive about +Z.
+/// - `orientation` is the rotation of the body frame relative to an
+///   east-north-up (ENU) world frame: the unit quaternion `q` that takes body
+///   vectors to world vectors, `v_world = q v_body q*`. World +Z is up. When
+///   the device references north, magnetic or true as its driver documents,
+///   world +X is east and +Y north: a level device facing east reads the
+///   identity, and one facing north a quarter turn about +Z. For a device
+///   without a north reference, world +Z is still up and the driver documents
+///   where heading zero is. `q` and `-q` are the same rotation; neither sign
+///   is promised. A device that reports its FRD body relative to
+///   north-east-down (NED) converts with [`ned_frd_to_enu_flu`]: NED to ENU
+///   is a rotation too, never a mirror.
+///
+/// Whether a driver keeps these axes needs a known scene, so its own
+/// simulation tests check them; `conformance::check_imu` (feature
+/// `conformance`) checks what holds in every scene.
 pub trait ImuSensor {
     fn read_imu(&mut self) -> RobotResult<Stamped<Imu>>;
+}
+
+/// A body vector from forward-right-down (FRD) axes into the forward-left-up
+/// (FLU) axes of the [`ImuSensor`] body frame: the half turn about +X, which
+/// takes `(x, y, z)` to `(x, -y, -z)`.
+///
+/// It is a rotation, not a mirror, so angular velocity converts as specific
+/// force does. A half turn is its own inverse: the same call takes FLU vectors
+/// to FRD, as a simulator that encodes device messages needs.
+///
+/// ```
+/// use roplat_behavior::{Vector3, frd_to_flu};
+///
+/// // A level FRD device at rest reads its specific force on -Z.
+/// let at_rest = frd_to_flu(Vector3::new(0.0, 0.0, -9.81));
+/// assert_eq!(at_rest, Vector3::new(0.0, 0.0, 9.81));
+/// ```
+pub const fn frd_to_flu(v: Vector3) -> Vector3 {
+    Vector3::new(v.x, -v.y, -v.z)
+}
+
+/// A world vector from north-east-down (NED) axes into east-north-up (ENU):
+/// the half turn about the horizontal axis halfway between north and east,
+/// which takes `(n, e, d)` to `(e, n, -d)`.
+///
+/// Like [`frd_to_flu`], it is a rotation and its own inverse.
+pub const fn ned_to_enu(v: Vector3) -> Vector3 {
+    Vector3::new(v.y, v.x, -v.z)
+}
+
+/// An orientation from the frames many devices report in, an FRD body
+/// relative to NED, into those of [`ImuSensor`], the FLU body relative to ENU.
+///
+/// With `q` taking FRD vectors to NED vectors, the result takes FLU vectors to
+/// ENU vectors. It is `q` between the half turns of [`ned_to_enu`] and
+/// [`frd_to_flu`], in Hamilton products of quaternions `(w, x, y, z)`:
+///
+/// ```text
+/// q_ENU<-FLU = q_ENU<-NED * q * q_FRD<-FLU
+/// q_ENU<-NED = (0, 1, 1, 0) / sqrt(2)    half turn about (1, 1, 0) / sqrt(2)
+/// q_FRD<-FLU = (0, -1, 0, 0)             half turn about X
+///
+/// (w, x, y, z)  ->  (w + z, x + y, x - y, w - z) / sqrt(2)
+/// ```
+///
+/// The map is linear and keeps the norm, so normalising before or after it
+/// gives the same result. Each half turn squares to `-1`, so the map is its own
+/// inverse: the same call takes an FLU body relative to ENU back to an FRD body
+/// relative to NED.
+///
+/// ```
+/// use roplat_behavior::{Quaternion, ned_frd_to_enu_flu};
+///
+/// // Level and facing north: the identity relative to NED, and a quarter
+/// // turn about +Z relative to ENU.
+/// let s = std::f64::consts::FRAC_1_SQRT_2;
+/// let north = ned_frd_to_enu_flu(Quaternion::IDENTITY);
+/// assert_eq!(north, Quaternion { x: 0.0, y: 0.0, z: s, w: s });
+/// ```
+pub const fn ned_frd_to_enu_flu(q: Quaternion) -> Quaternion {
+    let s = FRAC_1_SQRT_2;
+    Quaternion {
+        x: s * (q.x + q.y),
+        y: s * (q.x - q.y),
+        z: s * (q.w - q.z),
+        w: s * (q.w + q.z),
+    }
 }
 
 /// A camera with fixed intrinsics.
