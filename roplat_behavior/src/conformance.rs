@@ -131,8 +131,10 @@ pub fn check_force_torque_sensor<S: ForceTorqueSensor>(
 }
 
 /// Reads `samples` IMU messages with `advance` between them: header stream,
-/// finite present fields, unit orientation, and a mask that never sets bits
-/// the message does not define.
+/// a mask that never sets bits the message does not define, finite present
+/// fields, and a unit orientation. These hold in every scene; whether the
+/// readings keep the axes of [`ImuSensor`] needs a known scene, so the
+/// driver's own simulation tests check them.
 pub fn check_imu<S: ImuSensor>(
     sensor: &mut S,
     mut advance: impl FnMut(),
@@ -152,8 +154,11 @@ pub fn check_imu<S: ImuSensor>(
             ));
         }
         if let Some(q) = imu.orientation() {
+            if !q.to_xyzw().iter().all(|c| c.is_finite()) {
+                return Err(violation(CHECK, format!("non-finite orientation {q:?}")));
+            }
             let norm = (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w).sqrt();
-            if !norm.is_finite() || (norm - 1.0).abs() > 1e-6 {
+            if (norm - 1.0).abs() > 1e-6 {
                 return Err(violation(CHECK, format!("orientation norm {norm}")));
             }
         }

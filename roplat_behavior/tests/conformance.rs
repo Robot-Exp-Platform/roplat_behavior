@@ -10,7 +10,7 @@ use roplat_behavior::{
     conformance::{check_force_torque_sensor, check_gripper, check_imu, check_joints, check_lidar},
     msgs::{
         ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu, Quaternion, Stamp,
-        Stamped, Wrench, clock,
+        Stamped, Vector3, Wrench, clock,
     },
 };
 
@@ -89,6 +89,7 @@ fn force_torque_checks() {
 struct MockImu {
     seq: u64,
     orientation: Quaternion,
+    acceleration: Vector3,
 }
 
 impl ImuSensor for MockImu {
@@ -99,24 +100,31 @@ impl ImuSensor for MockImu {
             FrameId::new(1),
             self.seq,
         );
-        Ok(Stamped::new(
-            header,
-            Imu::EMPTY.with_orientation(self.orientation),
-        ))
+        let imu = Imu::EMPTY
+            .with_orientation(self.orientation)
+            .with_linear_acceleration(self.acceleration);
+        Ok(Stamped::new(header, imu))
     }
 }
 
 #[test]
 fn imu_checks() {
-    let mut good = MockImu { seq: 0, orientation: Quaternion::IDENTITY };
-    check_imu(&mut good, || {}, 4).unwrap();
-
-    let mut skewed = MockImu {
-        seq: 0,
-        orientation: Quaternion { x: 0.0, y: 0.0, z: 0.0, w: 2.0 },
+    let check = |orientation, acceleration| {
+        check_imu(&mut MockImu { seq: 0, orientation, acceleration }, || {}, 4)
     };
-    let e = check_imu(&mut skewed, || {}, 1).unwrap_err();
+    let level = Vector3::new(0.0, 0.0, 9.81);
+    check(Quaternion::IDENTITY, level).unwrap();
+
+    let skewed = Quaternion { x: 0.0, y: 0.0, z: 0.0, w: 2.0 };
+    let e = check(skewed, level).unwrap_err();
     assert!(e.detail.contains("orientation norm 2"), "{e}");
+
+    let broken = Quaternion { x: f64::NAN, ..Quaternion::IDENTITY };
+    let e = check(broken, level).unwrap_err();
+    assert!(e.detail.contains("non-finite orientation"), "{e}");
+
+    let e = check(Quaternion::IDENTITY, Vector3::new(0.0, f64::INFINITY, 9.81)).unwrap_err();
+    assert!(e.detail.contains("non-finite vector"), "{e}");
 }
 
 /// A gripper that reaches each commanded width, or ignores commands.

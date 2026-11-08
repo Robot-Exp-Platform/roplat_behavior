@@ -1,12 +1,15 @@
 //! The end-effector and sensor contracts compose without a `Robot` impl and
 //! carry the producer's clock and frame.
 
-use roplat_behavior::RobotResult;
+use std::f64::consts::FRAC_PI_2;
+
+use nalgebra as na;
 use roplat_behavior::behavior::{Camera, ForceTorqueSensor, Gripper, ImuSensor, Lidar, LidarPoint};
 use roplat_behavior::msgs::{
     CameraInfo, Clock, ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu,
-    ManualClock, Stamped, Vector3, Wrench,
+    ManualClock, Quaternion, Stamped, Vector3, Wrench,
 };
+use roplat_behavior::{RobotResult, frd_to_flu, ned_frd_to_enu_flu, ned_to_enu};
 
 struct Hand {
     state: GripperState,
@@ -157,4 +160,110 @@ fn lidar_scans_share_one_frame_convention_and_buffer() {
     assert_eq!(points.len(), 2);
     assert_eq!(points.capacity(), capacity);
     assert_eq!((header.frame, header.seq), (FrameId::new(10), 2));
+}
+
+const X: Vector3 = Vector3::new(1.0, 0.0, 0.0);
+const Y: Vector3 = Vector3::new(0.0, 1.0, 0.0);
+const Z: Vector3 = Vector3::new(0.0, 0.0, 1.0);
+const G: f64 = 9.81;
+
+/// `v` turned by the unit quaternion `q`.
+fn rotate(q: Quaternion, v: Vector3) -> Vector3 {
+    (na::UnitQuaternion::from(q) * na::Vector3::from(v)).into()
+}
+
+/// `v` turned back by the unit quaternion `q`.
+fn unrotate(q: Quaternion, v: Vector3) -> Vector3 {
+    (na::UnitQuaternion::from(q).inverse() * na::Vector3::from(v)).into()
+}
+
+fn cross(a: Vector3, b: Vector3) -> Vector3 {
+    na::Vector3::from(a).cross(&na::Vector3::from(b)).into()
+}
+
+fn close(a: Vector3, b: Vector3) -> bool {
+    (na::Vector3::from(a) - na::Vector3::from(b)).norm() < 1e-12
+}
+
+/// An FRD body relative to NED after roll, pitch and yaw, in that order.
+fn ned_frd(roll: f64, pitch: f64, yaw: f64) -> Quaternion {
+    na::UnitQuaternion::from_euler_angles(roll, pitch, yaw).into()
+}
+
+#[test]
+fn imu_vector_conversions_are_half_turns() {
+    let (a, b) = (Vector3::new(1.0, 2.0, 3.0), Vector3::new(-0.5, 0.25, 4.0));
+    for convert in [frd_to_flu as fn(Vector3) -> Vector3, ned_to_enu] {
+        assert_eq!(convert(convert(a)), a);
+        // A rotation keeps cross products, so angular velocity converts as
+        // specific force does; a mirror would flip them.
+        assert!(close(cross(convert(a), convert(b)), convert(cross(a, b))));
+    }
+    // North is world +Y, east +X, down -Z.
+    assert_eq!(ned_to_enu(X), Y);
+    assert_eq!(ned_to_enu(Y), X);
+    assert_eq!(ned_to_enu(Z), Vector3::new(0.0, 0.0, -1.0));
+    // A left turn reads negative about FRD +Z, which points down, and
+    // positive about FLU +Z.
+    assert_eq!(
+        frd_to_flu(Vector3::new(0.0, 0.0, -0.5)),
+        Vector3::new(0.0, 0.0, 0.5)
+    );
+}
+
+#[test]
+fn a_ned_frd_orientation_converts_as_its_vectors_do() {
+    let poses = [
+        ned_frd(0.0, 0.0, 0.0),
+        ned_frd(0.3, -0.2, 1.1),
+        ned_frd(-2.0, 1.2, -0.4),
+        ned_frd(3.0, 0.1, 2.5),
+    ];
+    let flu = Vector3::new(0.3, -1.2, 2.0);
+    for q in poses {
+        let enu_flu = ned_frd_to_enu_flu(q);
+        // FLU to FRD, FRD to NED by the device's orientation, NED to ENU.
+        let through_device = ned_to_enu(rotate(q, frd_to_flu(flu)));
+        assert!(close(rotate(enu_flu, flu), through_device), "{q:?}");
+
+        // At rest in any pose, the converted specific force points up.
+        let device_reads = unrotate(q, Vector3::new(0.0, 0.0, -G));
+        let reads = frd_to_flu(device_reads);
+        assert!(
+            close(rotate(enu_flu, reads), Vector3::new(0.0, 0.0, G)),
+            "{q:?}"
+        );
+
+        let norm = enu_flu.to_xyzw().iter().map(|c| c * c).sum::<f64>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-12, "{enu_flu:?}");
+        let back = ned_frd_to_enu_flu(enu_flu).to_xyzw();
+        assert!(
+            back.iter()
+                .zip(q.to_xyzw())
+                .all(|(a, b)| (a - b).abs() < 1e-12),
+            "{q:?} came back as {back:?}"
+        );
+    }
+}
+
+#[test]
+fn imu_orientation_heads_from_east_and_turns_right_handed() {
+    // Facing east, a heading of 90° relative to NED, is the identity.
+    let east = ned_frd_to_enu_flu(ned_frd(0.0, 0.0, FRAC_PI_2));
+    for axis in [X, Y, Z] {
+        assert!(close(rotate(east, axis), axis), "{east:?}");
+    }
+    // Facing north, the front points to world +Y and the left to west.
+    let north = ned_frd_to_enu_flu(ned_frd(0.0, 0.0, 0.0));
+    assert!(close(rotate(north, X), Y));
+    assert!(close(rotate(north, Y), Vector3::new(-1.0, 0.0, 0.0)));
+    // Rolled right side down while facing north: the left points up and the
+    // top east.
+    let rolled = ned_frd_to_enu_flu(ned_frd(FRAC_PI_2, 0.0, 0.0));
+    assert!(close(rotate(rolled, Y), Z));
+    assert!(close(rotate(rolled, Z), X));
+    // Nose up while facing north: the front points up and the top south.
+    let nose_up = ned_frd_to_enu_flu(ned_frd(0.0, FRAC_PI_2, 0.0));
+    assert!(close(rotate(nose_up, X), Z));
+    assert!(close(rotate(nose_up, Z), Vector3::new(0.0, -1.0, 0.0)));
 }
