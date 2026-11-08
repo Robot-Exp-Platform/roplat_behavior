@@ -73,6 +73,11 @@ pub trait Robot {
     /// The nominal period of the robot's control cycle. A control callback
     /// receives this period as its `Duration`, or `(k + 1)` times it when `k`
     /// cycles were missed before it.
+    ///
+    /// For a driver with a control channel ([`ControlWith`]) it is that
+    /// channel's cycle period. A driver without one, which moves only point to
+    /// point (Yaskawa HSES, for example), gives the period at which it
+    /// refreshes the robot's state. The driver documents which.
     const CONTROL_PERIOD: Duration;
 
     /// Driver / firmware version string.
