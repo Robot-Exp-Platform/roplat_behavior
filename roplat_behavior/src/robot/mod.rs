@@ -26,7 +26,7 @@ pub use control::{
 pub use device::{
     Camera, ForceTorqueSensor, Geodetic, GnssFix, GnssHeading, GnssReceiver, GnssStatus, GpsTime,
     Gripper, Heading, ImuSensor, Lidar, LidarPoint, MotionCapture, TrackedBody, frd_to_flu,
-    ned_frd_to_enu_flu, ned_to_enu,
+    ned_frd_to_enu_flu, ned_to_enu, yaw_ned_to_enu,
 };
 pub use endpoint::{EndPoint, EndPointPose};
 pub use joint::Joints;

@@ -82,7 +82,8 @@ impl PositionSetpoint {
 /// rotates into these with [`ned_to_enu`](crate::ned_to_enu),
 /// [`frd_to_flu`](crate::frd_to_flu) and
 /// [`ned_frd_to_enu_flu`](crate::ned_frd_to_enu_flu); an autopilot's yaw
-/// clockwise from north is `π/2` minus it, wrapped.
+/// clockwise from north converts both ways with
+/// [`yaw_ned_to_enu`](crate::yaw_ned_to_enu).
 ///
 /// # States
 ///

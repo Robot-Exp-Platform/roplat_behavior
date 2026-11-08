@@ -5,7 +5,7 @@
 //! implements them on whichever type owns the connection. Readings carry a
 //! [`Header`](crate::Header) with the producer's clock and frame.
 
-use std::f64::consts::FRAC_1_SQRT_2;
+use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI, TAU};
 
 use roplat_msgs::{
     CameraInfo, ForceTorque, GripperCommand, GripperState, Header, Imu, Pose, Quaternion, Stamped,
@@ -179,6 +179,38 @@ pub const fn ned_frd_to_enu_flu(q: Quaternion) -> Quaternion {
         z: s * (q.w - q.z),
         w: s * (q.w + q.z),
     }
+}
+
+/// A yaw clockwise from north, the heading of a north-east-down (NED) frame,
+/// as a yaw counter-clockwise from east about up, the yaw of an [`ImuSensor`]
+/// orientation and of a [`Heading`]: `π/2 - yaw`, in radians, wrapped into
+/// `(-π, π]`.
+///
+/// The formula is its own inverse: the same call takes such a yaw back to a
+/// heading clockwise from north, also wrapped into `(-π, π]`. A value already
+/// in range comes out exact, so north (0) is `π/2`, east (`π/2`) is 0, south
+/// (`π`) is `-π/2`, and west (`-π/2`) is `π`. The caller converts a heading
+/// in degrees to radians first; a NaN stays NaN.
+///
+/// ```
+/// use std::f64::consts::{FRAC_PI_2, PI};
+///
+/// use roplat_behavior::yaw_ned_to_enu;
+///
+/// assert_eq!(yaw_ned_to_enu(0.0), FRAC_PI_2);
+/// assert_eq!(yaw_ned_to_enu(PI), -FRAC_PI_2);
+/// assert_eq!(yaw_ned_to_enu(-FRAC_PI_2), PI);
+/// // A heading of 270 degrees is west too.
+/// assert!((yaw_ned_to_enu(270f64.to_radians()) - PI).abs() < 1e-12);
+/// ```
+pub fn yaw_ned_to_enu(yaw: f64) -> f64 {
+    let enu = FRAC_PI_2 - yaw;
+    if enu > -PI && enu <= PI {
+        return enu;
+    }
+    // In [0, 2π], 2π itself only by rounding.
+    let wrapped = enu.rem_euclid(TAU);
+    if wrapped > PI { wrapped - TAU } else { wrapped }
 }
 
 /// A camera with fixed intrinsics.
@@ -407,8 +439,9 @@ pub struct Heading {
 /// the yaw gives.
 ///
 /// Makers report heading clockwise from north, usually in degrees. The yaw is
-/// `π/2 - heading` in radians, wrapped into `(-π, π]`: a heading of 0° (north)
-/// is `π/2`, 90° (east) is 0, 180° (south) is `-π/2`, and 270° (west) is `π`.
+/// `π/2 - heading` in radians, wrapped into `(-π, π]`, which
+/// [`yaw_ned_to_enu`] computes: a heading of 0° (north) is `π/2`, 90° (east)
+/// is 0, 180° (south) is `-π/2`, and 270° (west) is `π`.
 ///
 /// An epoch without a heading solution has no heading:
 /// [`read_heading`](Self::read_heading) returns the next epoch that has one,
