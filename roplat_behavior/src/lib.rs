@@ -42,7 +42,7 @@ pub mod behavior {
         LidarPoint, LoadState, MassMatrixSpace, MobileBase, MobileBaseState, Motion, MotionFile,
         MotionLimits, Pose, Quadruped, QuadrupedState, Relative, RelativeSpace, Robot,
         RobotDescription, Space, SpaceMap, SpatialSample, StateView, TcpSpace, TorqueControl,
-        WholeBodyJointSpace, WholeBodyTorqueSpace, WholeBodyVelocitySpace,
+        VelocityControlledBase, WholeBodyJointSpace, WholeBodyTorqueSpace, WholeBodyVelocitySpace,
     };
 
     pub use crate::simulation::{ModelFormat, SimulationModel};

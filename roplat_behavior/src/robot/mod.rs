@@ -16,7 +16,7 @@ pub mod types;
 
 pub use arm::{Arm, ArmState};
 pub use async_control::{AsyncControl, AsyncControlCallback, AsyncControlWith};
-pub use category::{Humanoid, MobileBase, Quadruped};
+pub use category::{Humanoid, MobileBase, Quadruped, VelocityControlledBase};
 pub use control::{
     ArmTorqueControl, BalanceControl, BaseVelocityControl, CartesianPoseControl,
     CartesianVelocityControl, Control, ControlExit, ControlSpace, ControlStep, ControlWith,
