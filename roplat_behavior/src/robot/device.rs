@@ -215,8 +215,44 @@ pub fn yaw_ned_to_enu(yaw: f64) -> f64 {
 
 /// A camera with fixed intrinsics.
 ///
+/// # Frames
+///
 /// The frame type is the driver's until the shared image types land with the
-/// data-stream work; the header carries the capture time and optical frame.
+/// data-stream work. Every frame is [`camera_info`](Self::camera_info)'s
+/// `width` pixels wide and `height` rows high, row 0 at the top and column 0
+/// at the left, and `camera_info` does not change while the camera is open.
+///
+/// The header's `frame` names the optical frame: its origin is the optical
+/// centre, +Z points along the view, +X to the right of the image and +Y down
+/// it. With `k = [fx, s, cx, 0, fy, cy, 0, 0, 1]`, a point `(x, y, z)` in it
+/// lands, before distortion, at `u = (fx x + s y) / z + cx` and
+/// `v = fy y / z + cy`.
+///
+/// # Depth
+///
+/// A depth frame gives each pixel the distance in metres along the optical
+/// axis to the surface the pixel sees: the point's `z`, not its range along
+/// the pixel's ray. A device that measures the range along the ray, as many
+/// time-of-flight cameras do, has its driver convert it with the intrinsics
+/// and document that it does.
+///
+/// A pixel without a depth, because nothing is in range or the measurement
+/// failed, is missing. The driver's frame type marks it as `None`, or as NaN
+/// or infinity in floating-point samples, and documents which; never as a
+/// finite number such as 0 m or the far limit. A device that marks missing
+/// pixels with a number in its raw samples, as Z16 does with 0, has its
+/// driver report them missing wherever it gives metres.
+///
+/// # Stamps
+///
+/// The header's stamp is when the frame was captured, on the clock the driver
+/// stamps with; each driver documents which instant it takes (the start of
+/// the exposure, the kernel's time of the frame) and how it places it there.
+/// Stamps never go back, and `seq` rises with every frame.
+///
+/// `conformance::check_camera` (feature `conformance`) checks what holds in
+/// every scene, and `conformance::check_camera_facing_wall` the depth in a
+/// known one.
 pub trait Camera {
     type Frame;
 

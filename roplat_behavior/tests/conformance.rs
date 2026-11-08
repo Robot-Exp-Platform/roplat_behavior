@@ -7,17 +7,18 @@ use std::{cell::Cell, f64::consts::PI, rc::Rc, time::Duration};
 
 use nalgebra as na;
 use roplat_behavior::{
-    ForceTorqueSensor, Geodetic, GnssFix, GnssReceiver, GnssStatus, GpsTime, Gripper, ImuSensor,
-    Joints, LandedState, Lidar, LidarPoint, MotionCapture, Multirotor, MultirotorState,
+    Camera, ForceTorqueSensor, Geodetic, GnssFix, GnssReceiver, GnssStatus, GpsTime, Gripper,
+    ImuSensor, Joints, LandedState, Lidar, LidarPoint, MotionCapture, Multirotor, MultirotorState,
     PositionSetpoint, Robot, RobotResult, TrackedBody,
     conformance::{
-        AtRest, check_flight_state, check_force_torque_sensor, check_gnss, check_gripper,
-        check_imu, check_imu_at_rest, check_joints, check_lidar, check_motion_capture,
+        AtRest, FacingWall, FrameView, check_camera, check_camera_facing_wall, check_flight_state,
+        check_force_torque_sensor, check_gnss, check_gripper, check_imu, check_imu_at_rest,
+        check_joints, check_lidar, check_motion_capture,
     },
     frd_to_flu,
     msgs::{
-        ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu, Pose, Quaternion, Stamp,
-        Stamped, Vector3, Wrench, clock,
+        CameraInfo, ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu, Pose,
+        Quaternion, Stamp, Stamped, Vector3, Wrench, clock, distortion_model,
     },
     ned_frd_to_enu_flu,
 };
@@ -569,4 +570,246 @@ fn lidar_checks() {
         "lidar: stamp"
     );
     assert_eq!(check(LidarFault::NanIntensity).unwrap_err().check, "lidar");
+}
+
+/// Samples of a Z16-like depth stream: millimetres, 0 where the device has
+/// no depth.
+struct Z16 {
+    width: u32,
+    height: u32,
+    samples: Vec<u16>,
+}
+
+/// One broken camera promise to inject.
+#[derive(Clone, Copy, PartialEq)]
+enum CameraFault {
+    /// The range along each pixel's ray instead of the depth along the axis.
+    Radial,
+    /// Frames a row short of the intrinsics.
+    ShortFrame,
+    /// Intrinsics that change after the first frame.
+    Refocus,
+    /// A `seq` stuck at 1.
+    StuckSeq,
+}
+
+/// The distance from the camera to the wall it faces, m.
+const WALL: f64 = 1.5;
+
+/// 8 x 6 pixels with a 90° horizontal field of view.
+fn pinhole() -> CameraInfo {
+    CameraInfo {
+        width: 8,
+        height: 6,
+        k: [4.0, 0.0, 3.5, 0.0, 4.0, 2.5, 0.0, 0.0, 1.0],
+        ..Default::default()
+    }
+}
+
+/// A depth camera facing a wall `WALL` ahead, square to its axis; its
+/// top-left pixel has no depth.
+struct MockDepthCamera {
+    seq: u64,
+    info: CameraInfo,
+    fault: Option<CameraFault>,
+}
+
+impl MockDepthCamera {
+    fn new(fault: Option<CameraFault>) -> Self {
+        Self { seq: 0, info: pinhole(), fault }
+    }
+}
+
+impl Camera for MockDepthCamera {
+    type Frame = Z16;
+
+    fn camera_info(&self) -> CameraInfo {
+        let mut info = self.info;
+        if self.fault == Some(CameraFault::Refocus) && self.seq > 1 {
+            info.k[0] = 5.0;
+        }
+        info
+    }
+
+    fn capture(&mut self) -> RobotResult<Stamped<Z16>> {
+        self.seq += 1;
+        let (k, width) = (self.info.k, self.info.width);
+        let height = match self.fault {
+            Some(CameraFault::ShortFrame) => self.info.height - 1,
+            _ => self.info.height,
+        };
+        let mut samples = Vec::new();
+        for v in 0..height {
+            for u in 0..width {
+                let x = (f64::from(u) - k[2]) / k[0];
+                let y = (f64::from(v) - k[5]) / k[4];
+                let ray = match self.fault {
+                    Some(CameraFault::Radial) => (1.0 + x * x + y * y).sqrt(),
+                    _ => 1.0,
+                };
+                samples.push((WALL * ray * 1000.0).round() as u16);
+            }
+        }
+        if let Some(first) = samples.first_mut() {
+            *first = 0;
+        }
+        let seq = match self.fault {
+            Some(CameraFault::StuckSeq) => 1,
+            _ => self.seq,
+        };
+        let header = Header::new(
+            Stamp::new(clock::SIMULATION, self.seq as i64 * 33_000_000),
+            FrameId::new(5),
+            seq,
+        );
+        Ok(Stamped::new(header, Z16 { width, height, samples }))
+    }
+}
+
+/// The driver's accessor: millimetres to metres, 0 missing.
+fn metres(frame: &Z16) -> FrameView {
+    FrameView {
+        width: frame.width,
+        height: frame.height,
+        depth: frame
+            .samples
+            .iter()
+            .map(|&s| (s != 0).then_some(f64::from(s) / 1000.0))
+            .collect(),
+    }
+}
+
+#[test]
+fn camera_checks() {
+    let check = |fault, view: fn(&Z16) -> FrameView| {
+        check_camera(&mut MockDepthCamera::new(fault), || {}, 3, view).map_err(|e| e.check)
+    };
+    check(None, metres).unwrap();
+    // A frame without depth has only its size checked.
+    let colour: fn(&Z16) -> FrameView = |f| FrameView { depth: Vec::new(), ..metres(f) };
+    check(None, colour).unwrap();
+
+    assert_eq!(
+        check(Some(CameraFault::ShortFrame), metres),
+        Err("camera: size")
+    );
+    let cropped: fn(&Z16) -> FrameView = |f| {
+        let mut view = metres(f);
+        view.depth.pop();
+        view
+    };
+    assert_eq!(check(None, cropped), Err("camera: size"));
+    assert_eq!(
+        check(Some(CameraFault::Refocus), metres),
+        Err("camera: intrinsics")
+    );
+    let e = check_camera(
+        &mut MockDepthCamera::new(Some(CameraFault::StuckSeq)),
+        || {},
+        2,
+        metres,
+    )
+    .unwrap_err();
+    assert!(e.detail.contains("seq did not rise"), "{e}");
+
+    // A pixel without a depth read as 0 m, or as infinity: never a number.
+    let zero: fn(&Z16) -> FrameView = |f| FrameView {
+        depth: f
+            .samples
+            .iter()
+            .map(|&s| Some(f64::from(s) / 1000.0))
+            .collect(),
+        ..metres(f)
+    };
+    assert_eq!(check(None, zero), Err("camera: depth"));
+    let infinite: fn(&Z16) -> FrameView = |f| FrameView {
+        depth: f
+            .samples
+            .iter()
+            .map(|&s| {
+                Some(if s == 0 {
+                    f64::INFINITY
+                } else {
+                    f64::from(s) / 1000.0
+                })
+            })
+            .collect(),
+        ..metres(f)
+    };
+    assert_eq!(check(None, infinite), Err("camera: depth"));
+
+    // Intrinsics of a pinhole camera, distortion as its model uses it.
+    let k = pinhole().k;
+    let with_k = |at: usize, value: f64| {
+        let mut k = k;
+        k[at] = value;
+        CameraInfo { k, ..pinhole() }
+    };
+    let plumb_bob = CameraInfo {
+        distortion_model: distortion_model::PLUMB_BOB,
+        d: [0.1, -0.2, 0.001, 0.0, 0.05, 0.0, 0.0, 0.0],
+        ..pinhole()
+    };
+    let broken = [
+        CameraInfo { width: 0, ..pinhole() },
+        with_k(0, 0.0),
+        with_k(4, -4.0),
+        with_k(2, f64::NAN),
+        with_k(2, 9.0),
+        with_k(5, -1.0),
+        with_k(3, 0.5),
+        with_k(8, 2.0),
+        CameraInfo { distortion_model: 9, ..pinhole() },
+        CameraInfo { d: [0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], ..pinhole() },
+        CameraInfo { d: [0.1, -0.2, 0.001, 0.0, 0.05, 0.3, 0.0, 0.0], ..plumb_bob },
+        CameraInfo {
+            d: [f64::NAN, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            ..plumb_bob
+        },
+        CameraInfo { reserved: 1, ..pinhole() },
+    ];
+    for info in broken {
+        let mut camera = MockDepthCamera { info, ..MockDepthCamera::new(None) };
+        let result = check_camera(&mut camera, || {}, 1, metres).map_err(|e| e.check);
+        assert_eq!(result, Err("camera: intrinsics"), "{info:?}");
+    }
+    let mut distorted = MockDepthCamera { info: plumb_bob, ..MockDepthCamera::new(None) };
+    check_camera(&mut distorted, || {}, 1, metres).unwrap();
+}
+
+const FACING: FacingWall = FacingWall { distance: WALL, tolerance: 0.002, coverage: 0.9 };
+
+#[test]
+fn camera_facing_wall_checks() {
+    let check = |fault, view: fn(&Z16) -> FrameView, wall| {
+        let mut camera = MockDepthCamera::new(fault);
+        check_camera_facing_wall(&mut camera, || {}, 3, view, wall).map_err(|e| e.check)
+    };
+    check(None, metres, FACING).unwrap();
+
+    // The range along each ray: 47 % longer at the corners of a 90° view.
+    assert_eq!(
+        check(Some(CameraFault::Radial), metres, FACING),
+        Err("camera: wall")
+    );
+    // Millimetres read as metres.
+    let millimetres: fn(&Z16) -> FrameView = |f| FrameView {
+        depth: f
+            .samples
+            .iter()
+            .map(|&s| (s != 0).then_some(f64::from(s)))
+            .collect(),
+        ..metres(f)
+    };
+    assert_eq!(check(None, millimetres, FACING), Err("camera: wall"));
+    // 47 of 48 pixels read a depth; a frame without depth has none.
+    let everywhere = FacingWall { coverage: 1.0, ..FACING };
+    assert_eq!(check(None, metres, everywhere), Err("camera: wall"));
+    let colour: fn(&Z16) -> FrameView = |f| FrameView { depth: Vec::new(), ..metres(f) };
+    assert_eq!(check(None, colour, FACING), Err("camera: wall"));
+    // Everything check_camera checks comes first.
+    assert_eq!(
+        check(Some(CameraFault::ShortFrame), metres, FACING),
+        Err("camera: size")
+    );
 }
