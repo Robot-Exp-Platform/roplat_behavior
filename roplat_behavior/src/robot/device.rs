@@ -106,9 +106,10 @@ pub struct LidarPoint {
 /// [`LidarPoint::offset_ns`] gives each one's time.
 ///
 /// The header's stamp is the time of the scan's earliest return, on the
-/// clock the driver stamps with, so that return's offset is 0. Each driver
-/// documents how it places the device's time on that clock. `seq` rises with
-/// every scan, and `frame` names the lidar frame.
+/// clock the driver stamps with, so that return's offset is 0. A scan with no
+/// return in range still comes back, with no points, stamped when it ended.
+/// Each driver documents how it places the device's time on that clock. `seq`
+/// rises with every scan, and `frame` names the lidar frame.
 pub trait Lidar {
     /// Blocks for the next complete scan, replaces the contents of `points`
     /// with its returns, and returns its header.
