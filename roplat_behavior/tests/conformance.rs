@@ -3,19 +3,20 @@
 #![cfg(feature = "conformance")]
 
 use roplat_behavior::JointLimits;
-use std::{cell::Cell, f64::consts::PI, rc::Rc};
+use std::{cell::Cell, f64::consts::PI, rc::Rc, time::Duration};
 
 use nalgebra as na;
 use roplat_behavior::{
     ForceTorqueSensor, Geodetic, GnssFix, GnssReceiver, GnssStatus, GpsTime, Gripper, ImuSensor,
-    Joints, Lidar, LidarPoint, RobotResult,
+    Joints, LandedState, Lidar, LidarPoint, MotionCapture, Multirotor, MultirotorState,
+    PositionSetpoint, Robot, RobotResult, TrackedBody,
     conformance::{
-        AtRest, check_force_torque_sensor, check_gnss, check_gripper, check_imu, check_imu_at_rest,
-        check_joints, check_lidar,
+        AtRest, check_flight_state, check_force_torque_sensor, check_gnss, check_gripper,
+        check_imu, check_imu_at_rest, check_joints, check_lidar, check_motion_capture,
     },
     frd_to_flu,
     msgs::{
-        ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu, Quaternion, Stamp,
+        ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu, Pose, Quaternion, Stamp,
         Stamped, Vector3, Wrench, clock,
     },
     ned_frd_to_enu_flu,
@@ -272,6 +273,170 @@ fn gnss_checks() {
     let mut stuck = MockGnss { seq: 1, step: 0, fix: rtk };
     let e = check_gnss(&mut stuck, || {}, 2).unwrap_err();
     assert!(e.detail.contains("seq did not rise"), "{e}");
+}
+
+/// A motion-capture system that reports the same bodies every frame, its
+/// stamps moving by `stamp_step` ns.
+struct MockMocap {
+    seq: u64,
+    stamp_step: i64,
+    bodies: Vec<TrackedBody>,
+}
+
+impl MotionCapture for MockMocap {
+    fn read_frame(&mut self, bodies: &mut Vec<TrackedBody>) -> RobotResult<Header> {
+        self.seq += 1;
+        bodies.clone_from(&self.bodies);
+        let stamp = Stamp::new(
+            clock::SIMULATION,
+            1_000_000 + self.seq as i64 * self.stamp_step,
+        );
+        Ok(Header::new(stamp, FrameId::new(3), self.seq))
+    }
+}
+
+#[test]
+fn motion_capture_checks() {
+    let check = |bodies: Vec<TrackedBody>| {
+        let mut mocap = MockMocap { seq: 0, stamp_step: 8_333_333, bodies };
+        check_motion_capture(&mut mocap, || {}, 3).map_err(|e| e.check)
+    };
+    let tracked = TrackedBody {
+        id: 1,
+        pose: Some(Pose::from_quat_array(
+            [0.5, -0.2, 1.1],
+            [0.0, 0.0, 0.6, 0.8],
+        )),
+        error: Some(0.0004),
+    };
+    // A lost body is reported without a pose; an empty frame is a frame.
+    let lost = TrackedBody { id: 2, pose: None, error: None };
+    check(vec![tracked, lost]).unwrap();
+    check(Vec::new()).unwrap();
+
+    assert_eq!(check(vec![tracked, tracked]), Err("motion_capture: id"));
+    let skewed = Pose {
+        orientation: Quaternion { x: 0.0, y: 0.0, z: 0.0, w: 2.0 },
+        ..Pose::IDENTITY
+    };
+    let broken = [
+        TrackedBody { pose: Some(skewed), ..tracked },
+        TrackedBody {
+            pose: Some(Pose::from_position([f64::NAN, 0.0, 0.0])),
+            ..tracked
+        },
+        TrackedBody { error: Some(-0.001), ..tracked },
+        TrackedBody { error: Some(f64::INFINITY), ..tracked },
+    ];
+    for body in broken {
+        assert_eq!(check(vec![body]), Err("motion_capture"), "{body:?}");
+    }
+
+    // Stamps never go back.
+    let mut rewinding = MockMocap { seq: 0, stamp_step: -1, bodies: vec![tracked] };
+    let e = check_motion_capture(&mut rewinding, || {}, 2).unwrap_err();
+    assert!(e.detail.contains("stamp went back"), "{e}");
+}
+
+/// A multirotor hovering in place; its device clock moves by `tick` per
+/// estimate, backwards when `rewind` is set.
+struct MockVehicle {
+    seq: u64,
+    tick: Duration,
+    rewind: bool,
+    state: MultirotorState,
+}
+
+impl Robot for MockVehicle {
+    type State = MultirotorState;
+    const CONTROL_PERIOD: Duration = Duration::from_millis(20);
+
+    fn version() -> String {
+        String::new()
+    }
+
+    fn read_state(&mut self) -> RobotResult<MultirotorState> {
+        Ok(self.state)
+    }
+}
+
+impl Multirotor for MockVehicle {
+    fn read_flight_state(&mut self) -> RobotResult<Stamped<MultirotorState>> {
+        self.seq += 1;
+        let time = &mut self.state.device_time;
+        *time = if self.rewind {
+            time.saturating_sub(self.tick)
+        } else {
+            *time + self.tick
+        };
+        let header = Header::new(
+            Stamp::new(clock::SIMULATION, self.seq as i64),
+            FrameId::new(4),
+            self.seq,
+        );
+        Ok(Stamped::new(header, self.state))
+    }
+
+    fn take_off(&mut self, _: f64) -> RobotResult<()> {
+        Ok(())
+    }
+
+    fn send_setpoint(&mut self, _: PositionSetpoint) -> RobotResult<()> {
+        Ok(())
+    }
+
+    fn go_to(&mut self, _: PositionSetpoint) -> RobotResult<Stamped<MultirotorState>> {
+        self.read_flight_state()
+    }
+
+    fn land(&mut self) -> RobotResult<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn flight_state_checks() {
+    let check = |state, rewind| {
+        let tick = Duration::from_millis(20);
+        let mut vehicle = MockVehicle { seq: 0, tick, rewind, state };
+        check_flight_state(&mut vehicle, || {}, 3).map_err(|e| e.check)
+    };
+    let hover = MultirotorState {
+        device_time: Duration::from_secs(5),
+        position: Vector3::new(1.0, 2.0, 1.5),
+        velocity: Some(Vector3::ZERO),
+        orientation: Some(Quaternion::IDENTITY),
+        angular_velocity: Some(Vector3::ZERO),
+        armed: Some(true),
+        landed: Some(LandedState::InAir),
+    };
+    check(hover, false).unwrap();
+    // Only the position is required.
+    let bare = MultirotorState {
+        velocity: None,
+        orientation: None,
+        angular_velocity: None,
+        armed: None,
+        landed: None,
+        ..hover
+    };
+    check(bare, false).unwrap();
+
+    assert_eq!(check(hover, true), Err("flight_state: device time"));
+    let broken = [
+        MultirotorState { position: Vector3::new(f64::NAN, 0.0, 0.0), ..hover },
+        MultirotorState {
+            velocity: Some(Vector3::new(0.0, f64::INFINITY, 0.0)),
+            ..hover
+        },
+        MultirotorState {
+            orientation: Some(Quaternion { w: 2.0, ..Quaternion::IDENTITY }),
+            ..hover
+        },
+    ];
+    for state in broken {
+        assert_eq!(check(state, false), Err("flight_state"), "{state:?}");
+    }
 }
 
 /// A gripper that reaches each commanded width, or ignores commands.

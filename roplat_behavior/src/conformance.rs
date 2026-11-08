@@ -11,7 +11,8 @@
 //! quaternion, an IMU at rest reads gravity up in its world frame, a lidar
 //! leaves out rays without a return and stamps a scan
 //! with its earliest return, a GNSS fix has a position exactly when it has a
-//! solution, a tared static sensor reads zero, a gripper
+//! solution, a motion-capture frame reports each body once, a multirotor's
+//! device time does not go back, a tared static sensor reads zero, a gripper
 //! reaches the widths it is sent, an arm's declared joint envelope is
 //! coherent, and a real-time control session stops calling back once it is
 //! told to.
@@ -26,7 +27,7 @@ use roplat_msgs::{GripperCommand, Header, Imu};
 use crate::ControlExit;
 use crate::{
     ControlSpace, ControlWith, ForceTorqueSensor, GnssFix, GnssReceiver, GnssStatus, Gripper,
-    ImuSensor, Joints, Lidar, RobotException,
+    ImuSensor, Joints, Lidar, MotionCapture, Multirotor, RobotException,
 };
 
 /// A broken contract promise.
@@ -403,6 +404,106 @@ fn check_gnss_fix(check: &'static str, fix: &GnssFix) -> Result<(), Violation> {
         ));
     }
     Ok(())
+}
+
+/// Reads `frames` frames into one reused buffer with `advance` between them:
+/// header stream, each body at most once per frame, a finite position and a
+/// unit orientation for every tracked body, and marker errors that are finite
+/// and not negative. The capture world's axes need a known scene, so the
+/// driver's own simulation tests check them.
+pub fn check_motion_capture<M: MotionCapture>(
+    mocap: &mut M,
+    mut advance: impl FnMut(),
+    frames: usize,
+) -> Result<(), Violation> {
+    const CHECK: &str = "motion_capture";
+    let mut bodies = Vec::new();
+    let mut ids = Vec::new();
+    let mut headers = Vec::with_capacity(frames);
+    for _ in 0..frames {
+        advance();
+        let header = mocap
+            .read_frame(&mut bodies)
+            .map_err(|e| device(CHECK, e))?;
+        ids.clear();
+        for body in &bodies {
+            if ids.contains(&body.id) {
+                return Err(violation(
+                    "motion_capture: id",
+                    format!("body {} appears twice in one frame", body.id),
+                ));
+            }
+            ids.push(body.id);
+            if let Some(pose) = body.pose {
+                let q = pose.orientation;
+                let norm = (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w).sqrt();
+                if !pose.position().iter().all(|c| c.is_finite())
+                    || !norm.is_finite()
+                    || (norm - 1.0).abs() > 1e-6
+                {
+                    return Err(violation(
+                        CHECK,
+                        format!("body {}: pose {pose:?} is not finite or not unit", body.id),
+                    ));
+                }
+            }
+            if let Some(error) = body.error
+                && !(error.is_finite() && error >= 0.0)
+            {
+                return Err(violation(
+                    CHECK,
+                    format!("body {}: marker error {error} m", body.id),
+                ));
+            }
+        }
+        headers.push(header);
+    }
+    check_header_stream(CHECK, &headers)
+}
+
+/// Reads `samples` flight states with `advance` between them, without
+/// flying: header stream, device times that do not go back, finite present
+/// values and a unit orientation. Flying and the world's axes need a scene,
+/// so the driver's own simulation tests check them.
+pub fn check_flight_state<M: Multirotor>(
+    vehicle: &mut M,
+    mut advance: impl FnMut(),
+    samples: usize,
+) -> Result<(), Violation> {
+    const CHECK: &str = "flight_state";
+    let mut headers = Vec::with_capacity(samples);
+    let mut last_device_time = None;
+    for _ in 0..samples {
+        advance();
+        let reading = vehicle.read_flight_state().map_err(|e| device(CHECK, e))?;
+        let state = reading.value;
+        if let Some(last) = last_device_time
+            && state.device_time < last
+        {
+            return Err(violation(
+                "flight_state: device time",
+                format!(
+                    "device time went back: {last:?} then {:?}",
+                    state.device_time
+                ),
+            ));
+        }
+        last_device_time = Some(state.device_time);
+        let vectors = [Some(state.position), state.velocity, state.angular_velocity];
+        for v in vectors.into_iter().flatten() {
+            if ![v.x, v.y, v.z].iter().all(|c| c.is_finite()) {
+                return Err(violation(CHECK, format!("non-finite vector {v:?}")));
+            }
+        }
+        if let Some(q) = state.orientation {
+            let norm = (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w).sqrt();
+            if !norm.is_finite() || (norm - 1.0).abs() > 1e-6 {
+                return Err(violation(CHECK, format!("orientation {q:?} is not unit")));
+            }
+        }
+        headers.push(reading.header);
+    }
+    check_header_stream(CHECK, &headers)
 }
 
 /// Opens the gripper to each of `widths` (scaled by the reported
