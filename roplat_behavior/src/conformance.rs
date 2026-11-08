@@ -95,8 +95,9 @@ pub fn check_header_stream(check: &'static str, headers: &[Header]) -> Result<()
 /// if the device supports [`bias_wrench`](ForceTorqueSensor::bias_wrench),
 /// the next reading must then be zero within `tolerance` on every axis. A
 /// device without one answers
-/// [`NotSupported`](RobotException::NotSupported) or, as the default does,
-/// `UnprocessableInstructionError`.
+/// [`NotSupported`](RobotException::NotSupported), as the default does;
+/// `UnprocessableInstructionError`, the answer before `NotSupported` existed,
+/// is accepted too.
 pub fn check_force_torque_sensor<S: ForceTorqueSensor>(
     sensor: &mut S,
     mut advance: impl FnMut(),

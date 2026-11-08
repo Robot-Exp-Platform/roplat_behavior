@@ -31,14 +31,10 @@ pub trait MoveTo<S: Space>: Robot {
     /// caller polls or awaits it.
     ///
     /// Drivers should implement this only when they have a real async backend.
-    /// The default reports that async motion is not supported; it deliberately
-    /// does not wrap the blocking [`MoveTo::move_to`] path.
+    /// The default resolves to [`NotSupported`](RobotException::NotSupported);
+    /// it deliberately does not wrap the blocking [`MoveTo::move_to`] path.
     fn move_to_async(&mut self, _target: S::Value) -> impl Future<Output = RobotResult<()>> {
-        async {
-            Err(RobotException::UnprocessableInstructionError(
-                "async target motion is not implemented for this driver".to_string(),
-            ))
-        }
+        async { Err(RobotException::NotSupported { operation: "move_to_async" }) }
     }
 }
 

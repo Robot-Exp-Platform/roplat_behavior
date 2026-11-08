@@ -9,7 +9,9 @@ use roplat_behavior::msgs::{
     CameraInfo, Clock, ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu,
     ManualClock, Quaternion, Stamped, Vector3, Wrench,
 };
-use roplat_behavior::{MultirotorState, RobotResult, frd_to_flu, ned_frd_to_enu_flu, ned_to_enu};
+use roplat_behavior::{
+    MultirotorState, RobotException, RobotResult, frd_to_flu, ned_frd_to_enu_flu, ned_to_enu,
+};
 
 struct Hand {
     state: GripperState,
@@ -79,7 +81,10 @@ fn gripper_contract_drives_any_hand() {
     assert!(grasp(&mut hand).unwrap());
     assert_eq!(hand.read_gripper().unwrap().width, 0.01);
     // Optional operations report that the driver lacks them.
-    assert!(hand.stop_gripper().is_err());
+    assert!(matches!(
+        hand.stop_gripper(),
+        Err(RobotException::NotSupported { operation: "stop_gripper" })
+    ));
 }
 
 #[test]
@@ -105,7 +110,10 @@ fn sensor_readings_carry_clock_frame_and_order() {
         [1, 2, 3]
     );
     assert_eq!(sensors.camera_info().width, 2);
-    assert!(sensors.bias_wrench().is_err());
+    assert!(matches!(
+        sensors.bias_wrench(),
+        Err(RobotException::NotSupported { operation: "bias_wrench" })
+    ));
 }
 
 impl Lidar for Sensors<'_> {

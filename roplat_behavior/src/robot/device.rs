@@ -39,11 +39,11 @@ pub trait Gripper {
         Ok(())
     }
 
-    /// Stops the current motion or releases a held grasp force.
+    /// Stops the current motion or releases a held grasp force. The default,
+    /// for a device that cannot, returns
+    /// [`NotSupported`](RobotException::NotSupported).
     fn stop_gripper(&mut self) -> RobotResult<()> {
-        Err(RobotException::UnprocessableInstructionError(
-            "stopping the gripper is not implemented for this driver".to_string(),
-        ))
+        Err(RobotException::NotSupported { operation: "stop_gripper" })
     }
 }
 
@@ -52,11 +52,11 @@ pub trait Gripper {
 pub trait ForceTorqueSensor {
     fn read_wrench(&mut self) -> RobotResult<ForceTorque>;
 
-    /// Zeroes the current reading (tare), when the device supports it.
+    /// Zeroes the current reading (tare), when the device supports it. The
+    /// default, for a device that cannot, returns
+    /// [`NotSupported`](RobotException::NotSupported).
     fn bias_wrench(&mut self) -> RobotResult<()> {
-        Err(RobotException::UnprocessableInstructionError(
-            "biasing the wrench is not implemented for this driver".to_string(),
-        ))
+        Err(RobotException::NotSupported { operation: "bias_wrench" })
     }
 }
 
