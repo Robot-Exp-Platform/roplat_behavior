@@ -5,7 +5,7 @@
 //! implements them on whichever type owns the connection. Readings carry a
 //! [`Header`](crate::Header) with the producer's clock and frame.
 
-use std::f64::consts::FRAC_1_SQRT_2;
+use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI, TAU};
 
 use roplat_msgs::{
     CameraInfo, ForceTorque, GripperCommand, GripperState, Header, Imu, Pose, Quaternion, Stamped,
@@ -181,10 +181,90 @@ pub const fn ned_frd_to_enu_flu(q: Quaternion) -> Quaternion {
     }
 }
 
+/// A yaw clockwise from north, the heading of a north-east-down (NED) frame,
+/// as a yaw counter-clockwise from east about up, the yaw of an [`ImuSensor`]
+/// orientation and of a [`Heading`]: `π/2 - yaw`, in radians, wrapped into
+/// `(-π, π]`.
+///
+/// The formula is its own inverse: the same call takes such a yaw back to a
+/// heading clockwise from north, also wrapped into `(-π, π]`. A value already
+/// in range comes out exact, so north (0) is `π/2`, east (`π/2`) is 0, south
+/// (`π`) is `-π/2`, and west (`-π/2`) is `π`. The caller converts a heading
+/// in degrees to radians first; a NaN stays NaN.
+///
+/// ```
+/// use std::f64::consts::{FRAC_PI_2, PI};
+///
+/// use roplat_behavior::yaw_ned_to_enu;
+///
+/// assert_eq!(yaw_ned_to_enu(0.0), FRAC_PI_2);
+/// assert_eq!(yaw_ned_to_enu(PI), -FRAC_PI_2);
+/// assert_eq!(yaw_ned_to_enu(-FRAC_PI_2), PI);
+/// // A heading of 270 degrees is west too.
+/// assert!((yaw_ned_to_enu(270f64.to_radians()) - PI).abs() < 1e-12);
+/// ```
+pub fn yaw_ned_to_enu(yaw: f64) -> f64 {
+    let enu = FRAC_PI_2 - yaw;
+    if enu > -PI && enu <= PI {
+        return enu;
+    }
+    // In [0, 2π], 2π itself only by rounding.
+    let wrapped = enu.rem_euclid(TAU);
+    if wrapped > PI { wrapped - TAU } else { wrapped }
+}
+
 /// A camera with fixed intrinsics.
 ///
+/// # Frames
+///
 /// The frame type is the driver's until the shared image types land with the
-/// data-stream work; the header carries the capture time and optical frame.
+/// data-stream work. Every frame is [`camera_info`](Self::camera_info)'s
+/// `width` pixels wide and `height` rows high, row 0 at the top and column 0
+/// at the left, and `camera_info` does not change while the camera is open.
+///
+/// The header's `frame` names the optical frame: its origin is the optical
+/// centre, +Z points along the view, +X to the right of the image and +Y down
+/// it. With `k = [fx, s, cx, 0, fy, cy, 0, 0, 1]`, a point `(x, y, z)` in it
+/// lands, before distortion, at `u = (fx x + s y) / z + cx` and
+/// `v = fy y / z + cy`.
+///
+/// # Depth
+///
+/// A depth frame gives each pixel the distance in metres along the optical
+/// axis to the surface the pixel sees: the point's `z`, not its range `r`
+/// along the pixel's ray. A device that measures the range, as many
+/// time-of-flight cameras do, has its driver convert it with the intrinsics,
+/// `z = r / sqrt(1 + x² + y²)` with `(x, y)` the pixel's undistorted
+/// normalised coordinates, and document that it does.
+///
+/// A pixel has a depth or is missing: the contract has one missing value.
+/// A pixel is missing when the device measured nothing there, when the
+/// measurement failed or was rejected, and when the surface lies outside the
+/// range the device measures, nearer or farther: such a depth is missing,
+/// never clamped to the range's limit. The driver's frame type marks missing
+/// pixels as `None`, or as NaN or infinity in floating-point samples, and
+/// documents which; never as a finite number such as 0 m or the far limit. A
+/// device that marks missing pixels with a number in its raw samples, as Z16
+/// does with 0, has its driver report them missing wherever it gives metres.
+///
+/// There is one missing value because devices do not tell "nothing within
+/// range" from a failed measurement alike, or at all: a time-of-flight
+/// camera cannot tell a far surface from a dark one. Reading a missing pixel
+/// as free space up to the far limit is the caller's assumption, which the
+/// contract cannot make true. A driver whose device gives a reason (too
+/// near, saturated, low signal) keeps it in its frame type beside the depth;
+/// an infinity promises nothing more than missing.
+///
+/// # Stamps
+///
+/// The header's stamp is when the frame was captured, on the clock the driver
+/// stamps with; each driver documents which instant it takes (the start of
+/// the exposure, the kernel's time of the frame) and how it places it there.
+/// Stamps never go back, and `seq` rises with every frame.
+///
+/// `conformance::check_camera` (feature `conformance`) checks what holds in
+/// every scene, and `conformance::check_camera_facing_wall` the depth in a
+/// known one.
 pub trait Camera {
     type Frame;
 
@@ -407,8 +487,9 @@ pub struct Heading {
 /// the yaw gives.
 ///
 /// Makers report heading clockwise from north, usually in degrees. The yaw is
-/// `π/2 - heading` in radians, wrapped into `(-π, π]`: a heading of 0° (north)
-/// is `π/2`, 90° (east) is 0, 180° (south) is `-π/2`, and 270° (west) is `π`.
+/// `π/2 - heading` in radians, wrapped into `(-π, π]`, which
+/// [`yaw_ned_to_enu`] computes: a heading of 0° (north) is `π/2`, 90° (east)
+/// is 0, 180° (south) is `-π/2`, and 270° (west) is `π`.
 ///
 /// An epoch without a heading solution has no heading:
 /// [`read_heading`](Self::read_heading) returns the next epoch that has one,

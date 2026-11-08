@@ -8,7 +8,10 @@
 //! The checks cover what the contracts promise for every implementation:
 //! readings of one sensor share a clock and a frame, sequence numbers rise
 //! and stamps do not go back, values are finite, an IMU orientation is a unit
-//! quaternion, an IMU at rest reads gravity up in its world frame, a lidar
+//! quaternion, an IMU at rest reads gravity up in its world frame, a camera's
+//! frames have the size of its pinhole intrinsics and a missing depth is
+//! missing rather than a number, a camera facing a wall reads its distance
+//! in metres along the optical axis, a lidar
 //! leaves out rays without a return and stamps a scan
 //! with its earliest return, a GNSS fix has a position exactly when it has a
 //! solution, a motion-capture frame reports each body once, a multirotor's
@@ -22,12 +25,12 @@
 use std::{fmt, ops::ControlFlow, time::Duration};
 
 use nalgebra as na;
-use roplat_msgs::{GripperCommand, Header, Imu};
+use roplat_msgs::{CameraInfo, GripperCommand, Header, Imu, distortion_model};
 
 use crate::ControlExit;
 use crate::{
-    ControlSpace, ControlWith, ForceTorqueSensor, GnssFix, GnssReceiver, GnssStatus, Gripper,
-    ImuSensor, Joints, Lidar, MotionCapture, Multirotor, RobotException,
+    Camera, ControlSpace, ControlWith, ForceTorqueSensor, GnssFix, GnssReceiver, GnssStatus,
+    Gripper, ImuSensor, Joints, Lidar, MotionCapture, Multirotor, RobotException,
 };
 
 /// A broken contract promise.
@@ -287,6 +290,221 @@ pub fn check_imu_at_rest<S: ImuSensor>(
         ));
     }
     check_header_stream(CHECK, &headers)
+}
+
+/// What [`check_camera`] reads of one frame. A [`Camera`]'s frame type is
+/// the driver's, so the caller fills this in with the driver's own
+/// accessors, the ones its users read frames with.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FrameView {
+    /// Pixels per row.
+    pub width: u32,
+    /// Rows.
+    pub height: u32,
+    /// For a depth frame, every pixel's depth in metres, row by row from the
+    /// top-left pixel, `None` where the frame marks the depth missing; empty
+    /// for a frame without depth.
+    pub depth: Vec<Option<f64>>,
+}
+
+/// Captures `frames` frames with `advance` between them and reads each with
+/// `view`: pinhole intrinsics that do not change, frames of their size, the
+/// header stream, and a depth that is finite and positive wherever it is
+/// present, so that a pixel without one comes back missing rather than as
+/// 0 m or infinity. These hold in every scene. Whether the depth is in
+/// metres along the optical axis needs a known scene, which
+/// [`check_camera_facing_wall`] gives; the image's orientation needs a scene
+/// with features, so the driver's own simulation tests check it.
+///
+/// The intrinsics pass with a non-empty image, finite positive focal
+/// lengths, a finite skew, a principal point within the image, `0` below
+/// `fx` and `0 0 1` as the last row of `k`, a known [`distortion_model`]
+/// with finite coefficients and zeros after those it uses, and `reserved`
+/// zero.
+pub fn check_camera<C: Camera>(
+    camera: &mut C,
+    advance: impl FnMut(),
+    frames: usize,
+    view: impl FnMut(&C::Frame) -> FrameView,
+) -> Result<(), Violation> {
+    capture_frames(camera, advance, frames, view, |_| Ok(()))
+}
+
+/// The scene of [`check_camera_facing_wall`]: a flat surface square to the
+/// camera's optical axis, `distance` ahead of the optical centre, that fills
+/// the view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FacingWall {
+    /// Metres along the optical axis from the optical centre to the wall.
+    pub distance: f64,
+    /// Metres: the largest difference between a pixel's depth and
+    /// `distance`, noise and the device's error included.
+    pub tolerance: f64,
+    /// The smallest share of each frame's pixels, in `[0, 1]`, that must
+    /// read a depth.
+    pub coverage: f64,
+}
+
+/// Captures `frames` depth frames of a camera facing a wall, with `advance`
+/// between them: everything [`check_camera`] checks, at least
+/// `wall.coverage` of each frame's pixels with a depth, and every depth
+/// within `wall.tolerance` of `wall.distance`.
+///
+/// A wall square to the optical axis is at one depth in every pixel, so this
+/// catches a depth in millimetres or another unit, and a range along the
+/// pixel's ray reported as depth, which grows towards the edges of the image
+/// (by 15 % at 30° from the axis). It does not check the image's orientation
+/// or the optical frame's axes: a wall looks the same flipped or turned.
+pub fn check_camera_facing_wall<C: Camera>(
+    camera: &mut C,
+    advance: impl FnMut(),
+    frames: usize,
+    view: impl FnMut(&C::Frame) -> FrameView,
+    wall: FacingWall,
+) -> Result<(), Violation> {
+    const WALL: &str = "camera: wall";
+    capture_frames(camera, advance, frames, view, |seen| {
+        let pixels = seen.depth.len();
+        if pixels == 0 {
+            return Err(violation(WALL, "the frame carries no depth"));
+        }
+        let present = seen.depth.iter().flatten().count();
+        if (present as f64) < wall.coverage * pixels as f64 {
+            return Err(violation(
+                WALL,
+                format!(
+                    "{present} of {pixels} pixels read a depth, fewer than a share of {}",
+                    wall.coverage
+                ),
+            ));
+        }
+        for (i, depth) in seen.depth.iter().enumerate() {
+            if let Some(d) = *depth
+                && (d - wall.distance).abs() > wall.tolerance
+            {
+                let (u, v) = pixel(i, seen.width);
+                return Err(violation(
+                    WALL,
+                    format!(
+                        "pixel ({u}, {v}) reads {d} m, not about {} m",
+                        wall.distance
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Captures frames for the camera checks and reads each with `view`:
+/// intrinsics, size, missing depths and the header stream, and what `scene`
+/// asks of each view.
+fn capture_frames<C: Camera>(
+    camera: &mut C,
+    mut advance: impl FnMut(),
+    frames: usize,
+    mut view: impl FnMut(&C::Frame) -> FrameView,
+    mut scene: impl FnMut(&FrameView) -> Result<(), Violation>,
+) -> Result<(), Violation> {
+    const CHECK: &str = "camera";
+    const INTRINSICS: &str = "camera: intrinsics";
+    const SIZE: &str = "camera: size";
+    let info = camera.camera_info();
+    check_intrinsics(INTRINSICS, &info)?;
+    let pixels = info.width as usize * info.height as usize;
+    let mut headers = Vec::with_capacity(frames);
+    for _ in 0..frames {
+        advance();
+        let frame = camera.capture().map_err(|e| device(CHECK, e))?;
+        let now = camera.camera_info();
+        if now != info {
+            return Err(violation(
+                INTRINSICS,
+                format!("the intrinsics changed from {info:?} to {now:?}"),
+            ));
+        }
+        let seen = view(&frame.value);
+        if (seen.width, seen.height) != (info.width, info.height) {
+            return Err(violation(
+                SIZE,
+                format!(
+                    "a {} x {} frame from a {} x {} camera",
+                    seen.width, seen.height, info.width, info.height
+                ),
+            ));
+        }
+        if !seen.depth.is_empty() && seen.depth.len() != pixels {
+            return Err(violation(
+                SIZE,
+                format!("{} depths for {pixels} pixels", seen.depth.len()),
+            ));
+        }
+        let invalid = seen
+            .depth
+            .iter()
+            .enumerate()
+            .find_map(|(i, &d)| d.filter(|d| !(d.is_finite() && *d > 0.0)).map(|d| (i, d)));
+        if let Some((i, d)) = invalid {
+            let (u, v) = pixel(i, info.width);
+            return Err(violation(
+                "camera: depth",
+                format!(
+                    "pixel ({u}, {v}) reads {d} m; a depth is finite and positive, \
+                     and a pixel without one is missing"
+                ),
+            ));
+        }
+        scene(&seen)?;
+        headers.push(frame.header);
+    }
+    check_header_stream(CHECK, &headers)
+}
+
+/// Pinhole intrinsics as [`CameraInfo`] describes them.
+fn check_intrinsics(check: &'static str, info: &CameraInfo) -> Result<(), Violation> {
+    let fail = |what: &str| -> Result<(), Violation> {
+        Err(violation(check, format!("{what} in {info:?}")))
+    };
+    let k = &info.k;
+    if info.width == 0 || info.height == 0 {
+        return fail("an empty image");
+    }
+    if !k.iter().all(|v| v.is_finite()) {
+        return fail("a non-finite k");
+    }
+    if !(k[0] > 0.0 && k[4] > 0.0) {
+        return fail("a focal length that is not positive");
+    }
+    if k[3] != 0.0 || k[6..] != [0.0, 0.0, 1.0] {
+        return fail("a k that is not upper triangular with k[8] = 1");
+    }
+    let inside = |c: f64, size: u32| (0.0..=f64::from(size)).contains(&c);
+    if !(inside(k[2], info.width) && inside(k[5], info.height)) {
+        return fail("a principal point outside the image");
+    }
+    let used = match info.distortion_model {
+        distortion_model::NONE => 0,
+        distortion_model::PLUMB_BOB => 5,
+        distortion_model::RATIONAL_POLYNOMIAL => 8,
+        distortion_model::EQUIDISTANT => 4,
+        model => return fail(&format!("an unknown distortion model {model}")),
+    };
+    if !info.d.iter().all(|v| v.is_finite()) {
+        return fail("a non-finite distortion coefficient");
+    }
+    if info.d[used..].iter().any(|&v| v != 0.0) {
+        return fail("a coefficient the distortion model does not use");
+    }
+    if info.reserved != 0 {
+        return fail("a reserved field that is not zero");
+    }
+    Ok(())
+}
+
+/// The column and row of the `i`th pixel, counted row by row.
+fn pixel(i: usize, width: u32) -> (usize, usize) {
+    let width = width as usize;
+    (i % width, i / width)
 }
 
 /// Reads `scans` scans into one reused buffer with `advance` between them:

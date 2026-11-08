@@ -1,7 +1,10 @@
 //! The end-effector and sensor contracts compose without a `Robot` impl and
 //! carry the producer's clock and frame.
 
-use std::{f64::consts::FRAC_PI_2, time::Duration};
+use std::{
+    f64::consts::{FRAC_PI_2, PI, TAU},
+    time::Duration,
+};
 
 use nalgebra as na;
 use roplat_behavior::behavior::{Camera, ForceTorqueSensor, Gripper, ImuSensor, Lidar, LidarPoint};
@@ -11,6 +14,7 @@ use roplat_behavior::msgs::{
 };
 use roplat_behavior::{
     MultirotorState, RobotException, RobotResult, frd_to_flu, ned_frd_to_enu_flu, ned_to_enu,
+    yaw_ned_to_enu,
 };
 
 struct Hand {
@@ -294,4 +298,42 @@ fn a_multirotor_yaw_runs_from_east_like_the_imu_orientation() {
     let yaw = state.yaw().unwrap();
     assert!((yaw - (FRAC_PI_2 - heading)).abs() < 1e-12, "{yaw}");
     assert_eq!(MultirotorState { orientation: None, ..state }.yaw(), None);
+}
+
+/// `a - b` as an angle in `(-π, π]`.
+fn angle_between(a: f64, b: f64) -> f64 {
+    (a - b + PI).rem_euclid(TAU) - PI
+}
+
+#[test]
+fn a_heading_from_north_is_a_yaw_from_east_and_back() {
+    // The compass points of `Heading`.
+    for (degrees, yaw) in [
+        (0.0, FRAC_PI_2),
+        (90.0, 0.0),
+        (180.0, -FRAC_PI_2),
+        (270.0, PI),
+        (-90.0, PI),
+        (360.0, FRAC_PI_2),
+    ] {
+        let got = yaw_ned_to_enu(f64::to_radians(degrees));
+        assert!((got - yaw).abs() < 1e-12, "{degrees} degrees gave {got}");
+    }
+    let edges = [3.0 * FRAC_PI_2, FRAC_PI_2 + PI, -3.0 * FRAC_PI_2, 7.0 * PI];
+    let sweep = (-40..=40).map(|k| f64::from(k) * 0.3);
+    for heading in sweep.chain(edges) {
+        let yaw = yaw_ned_to_enu(heading);
+        assert!(yaw > -PI && yaw <= PI, "{heading} gave {yaw}");
+        // Its own inverse, up to whole turns.
+        let back = yaw_ned_to_enu(yaw);
+        assert!(angle_between(back, heading).abs() < 1e-12, "{heading}");
+        // The yaw of the attitude an autopilot reports with this heading.
+        let attitude = na::UnitQuaternion::from(ned_frd_to_enu_flu(ned_frd(0.0, 0.0, heading)));
+        let (_, _, of_attitude) = attitude.euler_angles();
+        assert!(
+            angle_between(of_attitude, yaw).abs() < 1e-9,
+            "{heading}: attitude yaw {of_attitude}, converted {yaw}"
+        );
+    }
+    assert!(yaw_ned_to_enu(f64::NAN).is_nan());
 }
