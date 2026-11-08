@@ -8,9 +8,11 @@
 //! The checks cover what the contracts promise for every implementation:
 //! readings of one sensor share a clock and a frame, sequence numbers rise
 //! and stamps do not go back, values are finite, an IMU orientation is a unit
-//! quaternion, a tared static sensor reads zero, a gripper reaches the
-//! widths it is sent, an arm's declared joint envelope is coherent, and a
-//! real-time control session stops calling back once it is told to.
+//! quaternion, a lidar leaves out rays without a return and stamps a scan
+//! with its earliest return, a tared static sensor reads zero, a gripper
+//! reaches the widths it is sent, an arm's declared joint envelope is
+//! coherent, and a real-time control session stops calling back once it is
+//! told to.
 //! Device-specific behavior (ranges, noise, timing) stays in the driver's
 //! own tests.
 
@@ -20,7 +22,7 @@ use roplat_msgs::{GripperCommand, Header, Imu};
 
 use crate::ControlExit;
 use crate::{
-    ControlSpace, ControlWith, ForceTorqueSensor, Gripper, ImuSensor, Joints, RobotException,
+    ControlSpace, ControlWith, ForceTorqueSensor, Gripper, ImuSensor, Joints, Lidar, RobotException,
 };
 
 /// A broken contract promise.
@@ -164,6 +166,48 @@ pub fn check_imu<S: ImuSensor>(
             }
         }
         headers.push(reading.header);
+    }
+    check_header_stream(CHECK, &headers)
+}
+
+/// Reads `scans` scans into one reused buffer with `advance` between them:
+/// header stream, finite positions and intensities, no point at the origin
+/// (the marker some devices send for a ray without a return), and an earliest
+/// return at offset 0. The lidar frame's axes need a known scene, so the
+/// driver's own simulation tests check them.
+pub fn check_lidar<L: Lidar>(
+    lidar: &mut L,
+    mut advance: impl FnMut(),
+    scans: usize,
+) -> Result<(), Violation> {
+    const CHECK: &str = "lidar";
+    let mut points = Vec::new();
+    let mut headers = Vec::with_capacity(scans);
+    for _ in 0..scans {
+        advance();
+        let header = lidar.read_scan(&mut points).map_err(|e| device(CHECK, e))?;
+        for p in &points {
+            if !p.position.iter().all(|c| c.is_finite())
+                || p.intensity.is_some_and(|i| !i.is_finite())
+            {
+                return Err(violation(CHECK, format!("non-finite point {p:?}")));
+            }
+            if p.position == [0.0; 3] {
+                return Err(violation(
+                    "lidar: no return",
+                    format!("a point at the origin, {} ns into the scan", p.offset_ns),
+                ));
+            }
+        }
+        if let Some(earliest) = points.iter().map(|p| p.offset_ns).min()
+            && earliest != 0
+        {
+            return Err(violation(
+                "lidar: stamp",
+                format!("the earliest return is {earliest} ns after the stamp"),
+            ));
+        }
+        headers.push(header);
     }
     check_header_stream(CHECK, &headers)
 }

@@ -6,8 +6,8 @@ use roplat_behavior::JointLimits;
 use std::{cell::Cell, rc::Rc};
 
 use roplat_behavior::{
-    ForceTorqueSensor, Gripper, ImuSensor, Joints, RobotResult,
-    conformance::{check_force_torque_sensor, check_gripper, check_imu, check_joints},
+    ForceTorqueSensor, Gripper, ImuSensor, Joints, Lidar, LidarPoint, RobotResult,
+    conformance::{check_force_torque_sensor, check_gripper, check_imu, check_joints, check_lidar},
     msgs::{
         ForceTorque, FrameId, GripperCommand, GripperState, Header, Imu, Quaternion, Stamp,
         Stamped, Wrench, clock,
@@ -192,4 +192,63 @@ fn joints_checks() {
     assert!(e.detail.contains("joint 1: packed posture 0"), "{e}");
     let e = check_joints::<NegativeVelocityArm, 1>().unwrap_err();
     assert!(e.detail.contains("dq_max -2"), "{e}");
+}
+
+/// One broken lidar promise to inject.
+#[derive(Clone, Copy)]
+enum LidarFault {
+    /// A ray without a return reported as a point at the origin.
+    OriginPoint,
+    /// The stamp is earlier than the earliest return.
+    EarlyStamp,
+    NanIntensity,
+}
+
+/// A planar scanner sweeping a 2 m circle.
+struct MockLidar {
+    seq: u64,
+    fault: Option<LidarFault>,
+}
+
+impl Lidar for MockLidar {
+    fn read_scan(&mut self, points: &mut Vec<LidarPoint>) -> RobotResult<Header> {
+        self.seq += 1;
+        points.clear();
+        points.extend((0..8u32).map(|k| {
+            let (s, c) = (f64::from(k) * 0.1).sin_cos();
+            LidarPoint {
+                position: [2.0 * c, 2.0 * s, 0.0],
+                offset_ns: k * 1000,
+                intensity: Some(50.0),
+                ring: Some(0),
+            }
+        }));
+        match self.fault {
+            None => {}
+            Some(LidarFault::OriginPoint) => points[3].position = [0.0; 3],
+            Some(LidarFault::EarlyStamp) => points.iter_mut().for_each(|p| p.offset_ns += 500),
+            Some(LidarFault::NanIntensity) => points[5].intensity = Some(f32::NAN),
+        }
+        Ok(Header::new(
+            Stamp::new(clock::SIMULATION, self.seq as i64 * 100_000_000),
+            FrameId::new(3),
+            self.seq,
+        ))
+    }
+}
+
+#[test]
+fn lidar_checks() {
+    check_lidar(&mut MockLidar { seq: 0, fault: None }, || {}, 3).unwrap();
+
+    let check = |fault| check_lidar(&mut MockLidar { seq: 0, fault: Some(fault) }, || {}, 1);
+    assert_eq!(
+        check(LidarFault::OriginPoint).unwrap_err().check,
+        "lidar: no return"
+    );
+    assert_eq!(
+        check(LidarFault::EarlyStamp).unwrap_err().check,
+        "lidar: stamp"
+    );
+    assert_eq!(check(LidarFault::NanIntensity).unwrap_err().check, "lidar");
 }
