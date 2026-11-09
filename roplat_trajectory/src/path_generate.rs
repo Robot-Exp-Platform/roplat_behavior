@@ -5,7 +5,7 @@
 use nalgebra as na;
 use std::time::Duration;
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 use std::sync::Arc;
 
 /// A synchronized constant-speed move of `N` joints: a [`JointSCurve`] with
