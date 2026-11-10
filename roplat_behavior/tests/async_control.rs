@@ -282,7 +282,7 @@ mod rhythm {
             if fail_exit {
                 let failure = session_error(&error);
                 assert!(
-                    matches!(failure.device, RobotException::CommandException(ref message) if message.to_string() == "exit failed")
+                    matches!(failure.device, RobotException::CommandException(ref message) if message == "exit failed")
                 );
                 assert!(
                     matches!(&failure.domain, Some(ControlDomainExit::Failed(RoplatError::Node(message))) if message.to_string() == "domain failed")
