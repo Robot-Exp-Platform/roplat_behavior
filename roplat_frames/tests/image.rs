@@ -48,7 +48,7 @@ fn rgb() -> Image {
 #[test]
 fn grey_is_bt601_luma() {
     let grey = rgb().rgb_to_gray().unwrap();
-    for (p, &g) in RGB.chunks_exact(3).zip(grey.data()) {
+    for (p, &g) in RGB.as_chunks::<3>().0.iter().zip(grey.data()) {
         let (r, gr, b) = (f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
         rounds_to(g, 0.299 * r + 0.587 * gr + 0.114 * b, "grey");
     }
@@ -57,7 +57,7 @@ fn grey_is_bt601_luma() {
     let back = grey.gray_to_rgb().unwrap();
     assert!(
         back.data()
-            .chunks_exact(3)
+            .as_chunks::<3>().0.iter()
             .zip(grey.data())
             .all(|(p, &g)| p == [g, g, g])
     );
@@ -87,7 +87,7 @@ fn hsv_formula([r, g, b]: [f64; 3]) -> [f64; 3] {
 #[test]
 fn hsv_is_opencvs_eight_bit_hsv() {
     let hsv = rgb().rgb_to_hsv().unwrap();
-    for (p, q) in RGB.chunks_exact(3).zip(hsv.data().chunks_exact(3)) {
+    for (p, q) in RGB.as_chunks::<3>().0.iter().zip(hsv.data().as_chunks::<3>().0.iter()) {
         let [h, s, v] = hsv_formula([p[0], p[1], p[2]].map(|c| f64::from(c) / 255.0));
         // A hue that rounds to 180 is 0.
         rounds_to(if q[0] == 0 && h > 179.0 { 180 } else { q[0] }, h, "hue");
@@ -137,7 +137,7 @@ fn rgb_formula(h_degrees: f64, s: f64, v: f64) -> [f64; 3] {
 fn hsv_converts_back_to_rgb() {
     let hsv = Image::new(8, 6, 3, HSV_IN.to_vec()).unwrap();
     let rgb = hsv.hsv_to_rgb().unwrap();
-    for (p, q) in HSV_IN.chunks_exact(3).zip(rgb.data().chunks_exact(3)) {
+    for (p, q) in HSV_IN.as_chunks::<3>().0.iter().zip(rgb.data().as_chunks::<3>().0.iter()) {
         let reference = rgb_formula(
             2.0 * f64::from(p[0]),
             f64::from(p[1]) / 255.0,
@@ -207,7 +207,7 @@ fn nv12_and_yuyv_decode_by_the_inverse_matrix() {
             }
         }
         let rgb = Image::from_yuyv(&YUYV, 8, 6, encoding).unwrap();
-        for (k, q) in YUYV.chunks_exact(4).enumerate() {
+        for (k, q) in YUYV.as_chunks::<4>().0.iter().enumerate() {
             for (half, y) in [q[0], q[2]].into_iter().enumerate() {
                 let reference = decode_formula(encoding, y, q[1], q[3]);
                 let pixel = &rgb.data()[(2 * k + half) * 3..][..3];

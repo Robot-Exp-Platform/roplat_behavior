@@ -371,10 +371,10 @@ impl Image {
     pub fn rgb_to_gray(&self) -> Result<Image, ImageError> {
         self.expect_channels(3)?;
         // In thousandths, exactly, rounded half up.
-        let luma = |p: &[u8]| {
+        let luma = |p: &[u8; 3]| {
             (299 * u32::from(p[0]) + 587 * u32::from(p[1]) + 114 * u32::from(p[2]) + 500) / 1000
         };
-        let data = self.data.chunks_exact(3).map(|p| luma(p) as u8).collect();
+        let data = self.data.as_chunks::<3>().0.iter().map(|p| luma(p) as u8).collect();
         Ok(Image { width: self.width, height: self.height, channels: 1, data })
     }
 
@@ -391,7 +391,7 @@ impl Image {
     pub fn rgb_to_hsv(&self) -> Result<Image, ImageError> {
         self.expect_channels(3)?;
         let mut data = Vec::with_capacity(self.data.len());
-        for p in self.data.chunks_exact(3) {
+        for p in self.data.as_chunks::<3>().0.iter() {
             let (r, g, b) = (f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
             let v = r.max(g).max(b);
             let spread = v - r.min(g).min(b);
@@ -421,7 +421,7 @@ impl Image {
     pub fn hsv_to_rgb(&self) -> Result<Image, ImageError> {
         self.expect_channels(3)?;
         let mut data = Vec::with_capacity(self.data.len());
-        for p in self.data.chunks_exact(3) {
+        for p in self.data.as_chunks::<3>().0.iter() {
             let sector = f64::from(p[0] % 180) * 2.0 / 60.0;
             let (s, v) = (f64::from(p[1]) / 255.0, f64::from(p[2]));
             let chroma = v * s;
@@ -473,8 +473,8 @@ impl Image {
         let (w, h) = (self.width, self.height);
         let samples: Vec<[f64; 3]> = self
             .data
-            .chunks_exact(3)
-            .map(|p| encoding.encode([p[0], p[1], p[2]]))
+            .as_chunks::<3>().0.iter()
+            .map(|p| encoding.encode(*p))
             .collect();
         let mut out: Vec<u8> = samples.iter().map(|s| byte(s[0])).collect();
         out.reserve(w * h / 2);
@@ -486,11 +486,8 @@ impl Image {
                     (y + 1) * w + x,
                     (y + 1) * w + x + 1,
                 ];
-                for k in 1..3 {
-                    out.push(byte(
-                        block.iter().map(|&i| samples[i][k]).sum::<f64>() / 4.0,
-                    ));
-                }
+                let mean = |k: usize| block.iter().map(|&i| samples[i][k]).sum::<f64>() / 4.0;
+                out.extend([byte(mean(1)), byte(mean(2))]);
             }
         }
         Ok(out)
@@ -510,7 +507,7 @@ impl Image {
             return Err(ImageError::Length { needed, got: data.len() });
         }
         let mut rgb = Vec::with_capacity(width * height * 3);
-        for q in data.chunks_exact(4) {
+        for q in data.as_chunks::<4>().0.iter() {
             rgb.extend(encoding.decode(q[0], q[1], q[3]));
             rgb.extend(encoding.decode(q[2], q[1], q[3]));
         }
@@ -523,7 +520,7 @@ impl Image {
         self.expect_channels(3)?;
         check_layout(self.width, self.height, false)?;
         let mut out = Vec::with_capacity(self.width * self.height * 2);
-        for pair in self.data.chunks_exact(6) {
+        for pair in self.data.as_chunks::<6>().0.iter() {
             let [y0, cb0, cr0] = encoding.encode([pair[0], pair[1], pair[2]]);
             let [y1, cb1, cr1] = encoding.encode([pair[3], pair[4], pair[5]]);
             out.extend([
