@@ -23,6 +23,8 @@
 //! - [`normals`]: surface normals and curvature ([`estimate_normals`]), and
 //!   smooth surfaces grown across them ([`smooth_regions`]), which separate
 //!   surfaces that touch at a crease.
+//! - [`search`]: the nearest, the `k` nearest and the points within a radius
+//!   of any query point, exact, by a k-d tree ([`KdTree`]).
 //!
 //! ```
 //! use roplat_perception::{TabletopOptions, segment_tabletop};
@@ -57,6 +59,7 @@ pub mod fit;
 mod grid;
 pub mod normals;
 pub mod registration;
+pub mod search;
 pub mod segment;
 pub mod tabletop;
 
@@ -64,5 +67,6 @@ pub use cloud::{crop_box, remove_sparse, remove_statistical_outliers, voxel_down
 pub use fit::{FittedShape, fit_box, fit_box_on, fit_cylinder_on, fit_on, fit_sphere};
 pub use normals::{RegionOptions, SurfaceNormal, estimate_normals, smooth_regions};
 pub use registration::{IcpOptions, Registration, icp, icp_point_to_plane};
+pub use search::{KdTree, Neighbour};
 pub use segment::{Plane, PlaneFit, PlaneOptions, euclidean_clusters, fit_plane};
 pub use tabletop::{Tabletop, TabletopError, TabletopObject, TabletopOptions, segment_tabletop};
