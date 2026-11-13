@@ -62,7 +62,11 @@ fn check(tree: &KdTree, query: &[f64; 3], radii: &[f64]) -> usize {
             .filter(|n| n.squared_distance <= radius * radius)
             .copied()
             .collect();
-        assert_eq!(tree.within(query, radius), expected, "radius {radius} at {query:?}");
+        assert_eq!(
+            tree.within(query, radius),
+            expected,
+            "radius {radius} at {query:?}"
+        );
         compared += 1;
     }
     compared
@@ -93,7 +97,13 @@ fn random_clouds_match_brute_force() {
 fn ties_on_a_grid_are_broken_by_index() {
     let step = 0.125;
     let points: Vec<[f64; 3]> = (0..1000)
-        .map(|i| [(i % 10) as f64 * step, (i / 10 % 10) as f64 * step, (i / 100) as f64 * step])
+        .map(|i| {
+            [
+                (i % 10) as f64 * step,
+                (i / 10 % 10) as f64 * step,
+                (i / 100) as f64 * step,
+            ]
+        })
         .collect();
     let tree = KdTree::new(&points);
     let (mut queries, mut ties) = (0, 0);
@@ -126,13 +136,18 @@ fn duplicates_lines_and_missing_points() {
     let mut repeated: Vec<[f64; 3]> = base.iter().flat_map(|p| [*p, *p, *p]).collect();
     repeated.insert(17, [f64::NAN, 0.0, 0.0]);
     repeated.insert(400, [0.0, f64::INFINITY, 0.0]);
-    let line: Vec<[f64; 3]> = (0..500).map(|i| [0.3, -0.2 + 0.001 * (i % 97) as f64, 1.0]).collect();
+    let line: Vec<[f64; 3]> = (0..500)
+        .map(|i| [0.3, -0.2 + 0.001 * (i % 97) as f64, 1.0])
+        .collect();
     let same = vec![[0.5, 0.5, 0.5]; 50];
     for cloud in [&repeated, &line, &same] {
         let tree = KdTree::new(cloud);
         assert_eq!(
             tree.len(),
-            cloud.iter().filter(|p| p.iter().all(|c| c.is_finite())).count()
+            cloud
+                .iter()
+                .filter(|p| p.iter().all(|c| c.is_finite()))
+                .count()
         );
         for _ in 0..40 {
             let query = rng.point(1.2);

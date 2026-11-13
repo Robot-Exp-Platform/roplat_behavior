@@ -93,7 +93,9 @@ impl<'a> KdTree<'a> {
     /// The tree over the finite points of `points`; indices in answers are
     /// indices into `points`.
     pub fn new(points: &'a [[f64; 3]]) -> Self {
-        let order: Vec<usize> = (0..points.len()).filter(|&i| is_finite(&points[i])).collect();
+        let order: Vec<usize> = (0..points.len())
+            .filter(|&i| is_finite(&points[i]))
+            .collect();
         let mut tree = Self { points, axes: vec![0; order.len()], order };
         tree.split(0, tree.order.len());
         tree
@@ -151,7 +153,11 @@ impl<'a> KdTree<'a> {
         }
         let mut best = Best { k, heap: BinaryHeap::with_capacity(k.min(self.len()) + 1) };
         self.search(0, self.order.len(), query, &mut best);
-        best.heap.into_sorted_vec().into_iter().map(|r| r.0).collect()
+        best.heap
+            .into_sorted_vec()
+            .into_iter()
+            .map(|r| r.0)
+            .collect()
     }
 
     /// The points within `radius` (m) of `query`, the boundary included,

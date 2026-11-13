@@ -118,7 +118,10 @@ fn the_velocity_bound_holds_when_reached_before_the_acceleration_saturates() {
     // At 0.2 s, the end of the first jerk phase, the line speed is
     // j t²/2 = 1/3 of v and the travelled fraction j t³/6 = 0.0222.
     let (q, _) = curve.apply(Duration::from_millis(200));
-    assert!((q[0] - 0.3 * (5.0 / 0.3) * 0.008 / 6.0).abs() < 1e-12, "{q:?}");
+    assert!(
+        (q[0] - 0.3 * (5.0 / 0.3) * 0.008 / 6.0).abs() < 1e-12,
+        "{q:?}"
+    );
     assert_eq!(curve.apply(total), (goal, true));
 }
 
@@ -171,7 +174,10 @@ fn random_moves_stay_within_every_bound() {
         let steps = 2_000;
         let peaks = peaks(&curve, total, steps);
         let h = (total.as_nanos() as u64 / steps).max(1) as f64 * 1e-9;
-        let scale = start.iter().chain(&goal).fold(0.0f64, |m, x| m.max(x.abs()));
+        let scale = start
+            .iter()
+            .chain(&goal)
+            .fold(0.0f64, |m, x| m.max(x.abs()));
         for (i, &[pv, pa, pj]) in peaks.iter().enumerate() {
             assert!(
                 pv <= v[i] * (1.0 + 1e-9) + rounding(scale, h, 1),

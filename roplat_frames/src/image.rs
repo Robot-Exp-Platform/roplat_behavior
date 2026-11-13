@@ -140,7 +140,11 @@ impl YCbCr {
     /// The unrounded `Y′, Cb, Cr` samples of an RGB pixel.
     fn encode(self, [r, g, b]: [u8; 3]) -> [f64; 3] {
         let (kr, kb, full) = self.parameters();
-        let (r, g, b) = (f64::from(r) / 255.0, f64::from(g) / 255.0, f64::from(b) / 255.0);
+        let (r, g, b) = (
+            f64::from(r) / 255.0,
+            f64::from(g) / 255.0,
+            f64::from(b) / 255.0,
+        );
         let y = kr * r + (1.0 - kr - kb) * g + kb * b;
         let cb = (b - y) / (2.0 * (1.0 - kb));
         let cr = (r - y) / (2.0 * (1.0 - kr));
@@ -155,7 +159,11 @@ impl YCbCr {
     fn decode(self, y: u8, cb: u8, cr: u8) -> [u8; 3] {
         let (kr, kb, full) = self.parameters();
         let (y, cb, cr) = if full {
-            (f64::from(y) / 255.0, (f64::from(cb) - 128.0) / 255.0, (f64::from(cr) - 128.0) / 255.0)
+            (
+                f64::from(y) / 255.0,
+                (f64::from(cb) - 128.0) / 255.0,
+                (f64::from(cr) - 128.0) / 255.0,
+            )
         } else {
             (
                 (f64::from(y) - 16.0) / 219.0,
@@ -173,7 +181,9 @@ impl YCbCr {
 /// Why an image could not be made or processed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ImageError {
-    #[error("an image needs a positive width, height and channel count, not {width} x {height} x {channels}")]
+    #[error(
+        "an image needs a positive width, height and channel count, not {width} x {height} x {channels}"
+    )]
     Empty {
         width: usize,
         height: usize,
@@ -262,14 +272,16 @@ impl Image {
     pub fn crop(&self, region: Rect) -> Result<Image, ImageError> {
         let inside = region.width > 0
             && region.height > 0
-            && region.x.checked_add(region.width).is_some_and(|r| r <= self.width)
-            && region.y.checked_add(region.height).is_some_and(|b| b <= self.height);
+            && region
+                .x
+                .checked_add(region.width)
+                .is_some_and(|r| r <= self.width)
+            && region
+                .y
+                .checked_add(region.height)
+                .is_some_and(|b| b <= self.height);
         if !inside {
-            return Err(ImageError::OutOfBounds {
-                region,
-                width: self.width,
-                height: self.height,
-            });
+            return Err(ImageError::OutOfBounds { region, width: self.width, height: self.height });
         }
         let row = region.width * self.channels;
         let mut data = Vec::with_capacity(row * region.height);
@@ -277,7 +289,12 @@ impl Image {
             let at = (y * self.width + region.x) * self.channels;
             data.extend_from_slice(&self.data[at..at + row]);
         }
-        Ok(Image { width: region.width, height: region.height, channels: self.channels, data })
+        Ok(Image {
+            width: region.width,
+            height: region.height,
+            channels: self.channels,
+            data,
+        })
     }
 
     /// The image resampled to `width × height` pixels by `filter`, every
@@ -291,8 +308,9 @@ impl Image {
         match filter {
             Filter::Nearest => {
                 // floor((x + 0.5) · W / w) in integers.
-                let xs: Vec<usize> =
-                    (0..width).map(|x| ((2 * x + 1) * self.width) / (2 * width)).collect();
+                let xs: Vec<usize> = (0..width)
+                    .map(|x| ((2 * x + 1) * self.width) / (2 * width))
+                    .collect();
                 for y in 0..height {
                     let sy = ((2 * y + 1) * self.height) / (2 * height);
                     for (x, &sx) in xs.iter().enumerate() {
@@ -303,13 +321,16 @@ impl Image {
                 }
             }
             Filter::Bilinear => {
-                let xs: Vec<(usize, usize, f64)> =
-                    (0..width).map(|x| linear_taps(x, width, self.width)).collect();
+                let xs: Vec<(usize, usize, f64)> = (0..width)
+                    .map(|x| linear_taps(x, width, self.width))
+                    .collect();
                 for y in 0..height {
                     let (y0, y1, fy) = linear_taps(y, height, self.height);
                     for (x, &(x0, x1, fx)) in xs.iter().enumerate() {
                         for k in 0..c {
-                            let at = |sx: usize, sy: usize| f64::from(self.data[(sy * self.width + sx) * c + k]);
+                            let at = |sx: usize, sy: usize| {
+                                f64::from(self.data[(sy * self.width + sx) * c + k])
+                            };
                             let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
                             let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
                             data[(y * width + x) * c + k] = byte(top + (bottom - top) * fy);
@@ -318,8 +339,9 @@ impl Image {
                 }
             }
             Filter::Area => {
-                let xs: Vec<Vec<(usize, u64)>> =
-                    (0..width).map(|x| area_taps(x, width, self.width)).collect();
+                let xs: Vec<Vec<(usize, u64)>> = (0..width)
+                    .map(|x| area_taps(x, width, self.width))
+                    .collect();
                 // Weights are overlaps in units of 1/w and 1/h of a source
                 // pixel; a destination pixel's add up to W · H.
                 let total = (self.width * self.height) as u64;
@@ -330,7 +352,9 @@ impl Image {
                             let mut sum = 0u64;
                             for &(sy, wy) in &ys {
                                 for &(sx, wx) in xw {
-                                    sum += wx * wy * u64::from(self.data[(sy * self.width + sx) * c + k]);
+                                    sum += wx
+                                        * wy
+                                        * u64::from(self.data[(sy * self.width + sx) * c + k]);
                                 }
                             }
                             // Exact, rounded half up.
@@ -381,7 +405,11 @@ impl Image {
             } else {
                 240.0 + 60.0 * (r - g) / spread
             };
-            let degrees = if degrees < 0.0 { degrees + 360.0 } else { degrees };
+            let degrees = if degrees < 0.0 {
+                degrees + 360.0
+            } else {
+                degrees
+            };
             let h = (degrees / 2.0).round() as u32 % 180;
             data.extend([h as u8, byte(s), p[0].max(p[1]).max(p[2])]);
         }
@@ -452,9 +480,16 @@ impl Image {
         out.reserve(w * h / 2);
         for y in (0..h).step_by(2) {
             for x in (0..w).step_by(2) {
-                let block = [y * w + x, y * w + x + 1, (y + 1) * w + x, (y + 1) * w + x + 1];
+                let block = [
+                    y * w + x,
+                    y * w + x + 1,
+                    (y + 1) * w + x,
+                    (y + 1) * w + x + 1,
+                ];
                 for k in 1..3 {
-                    out.push(byte(block.iter().map(|&i| samples[i][k]).sum::<f64>() / 4.0));
+                    out.push(byte(
+                        block.iter().map(|&i| samples[i][k]).sum::<f64>() / 4.0,
+                    ));
                 }
             }
         }
@@ -491,7 +526,12 @@ impl Image {
         for pair in self.data.chunks_exact(6) {
             let [y0, cb0, cr0] = encoding.encode([pair[0], pair[1], pair[2]]);
             let [y1, cb1, cr1] = encoding.encode([pair[3], pair[4], pair[5]]);
-            out.extend([byte(y0), byte((cb0 + cb1) / 2.0), byte(y1), byte((cr0 + cr1) / 2.0)]);
+            out.extend([
+                byte(y0),
+                byte((cb0 + cb1) / 2.0),
+                byte(y1),
+                byte((cr0 + cr1) / 2.0),
+            ]);
         }
         Ok(out)
     }
@@ -517,7 +557,13 @@ impl Image {
         }
         let mirror = |i: isize, len: usize| -> usize {
             let last = len as isize - 1;
-            (if i < 0 { -i } else if i > last { 2 * last - i } else { i }) as usize
+            (if i < 0 {
+                -i
+            } else if i > last {
+                2 * last - i
+            } else {
+                i
+            }) as usize
         };
         let at = |x: isize, y: isize| f64::from(data[mirror(y, height) * width + mirror(x, width)]);
         let mut rgb = Vec::with_capacity(needed * 3);
@@ -533,7 +579,8 @@ impl Image {
                     pixel[pattern.channel(x + 1, y)] = (at(xi - 1, yi) + at(xi + 1, yi)) / 2.0;
                     pixel[pattern.channel(x, y + 1)] = (at(xi, yi - 1) + at(xi, yi + 1)) / 2.0;
                 } else {
-                    pixel[1] = (at(xi - 1, yi) + at(xi + 1, yi) + at(xi, yi - 1) + at(xi, yi + 1)) / 4.0;
+                    pixel[1] =
+                        (at(xi - 1, yi) + at(xi + 1, yi) + at(xi, yi - 1) + at(xi, yi + 1)) / 4.0;
                     pixel[2 - own] = (at(xi - 1, yi - 1)
                         + at(xi + 1, yi - 1)
                         + at(xi - 1, yi + 1)

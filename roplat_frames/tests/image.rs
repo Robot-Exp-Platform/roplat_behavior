@@ -33,7 +33,10 @@ fn rounds_to(ours: u8, reference: f64, what: &str) {
 fn within_one_step(ours: &[u8], opencv: &[u8], what: &str) -> usize {
     assert_eq!(ours.len(), opencv.len(), "{what}");
     for (k, (a, b)) in ours.iter().zip(opencv).enumerate() {
-        assert!(a.abs_diff(*b) <= 1, "{what}, byte {k}: {a} against OpenCV's {b}");
+        assert!(
+            a.abs_diff(*b) <= 1,
+            "{what}, byte {k}: {a} against OpenCV's {b}"
+        );
     }
     ours.iter().zip(opencv).filter(|(a, b)| a == b).count()
 }
@@ -52,7 +55,12 @@ fn grey_is_bt601_luma() {
     let exact = within_one_step(grey.data(), &GRAY, "grey");
     println!("grey: {exact} of 48 equal to OpenCV, the rest within one step");
     let back = grey.gray_to_rgb().unwrap();
-    assert!(back.data().chunks_exact(3).zip(grey.data()).all(|(p, &g)| p == [g, g, g]));
+    assert!(
+        back.data()
+            .chunks_exact(3)
+            .zip(grey.data())
+            .all(|(p, &g)| p == [g, g, g])
+    );
 }
 
 /// OpenCV's documented RGB to HSV, `R, G, B` scaled to `0..1`, then `H/2`,
@@ -99,11 +107,19 @@ fn hsv_is_opencvs_eight_bit_hsv() {
     let exact = hsv.data().iter().zip(&HSV).filter(|(a, b)| a == b).count();
     println!("HSV: {exact} of 144 equal to OpenCV, the rest within one step");
     // Grey, the primaries and a hue just short of 360°.
-    let special = Image::new(5, 1, 3, vec![0, 0, 0, 90, 90, 90, 255, 0, 0, 0, 0, 255, 255, 0, 1])
-        .unwrap()
-        .rgb_to_hsv()
-        .unwrap();
-    assert_eq!(special.data(), [0, 0, 0, 0, 0, 90, 0, 255, 255, 120, 255, 255, 0, 255, 255]);
+    let special = Image::new(
+        5,
+        1,
+        3,
+        vec![0, 0, 0, 90, 90, 90, 255, 0, 0, 0, 0, 255, 255, 0, 1],
+    )
+    .unwrap()
+    .rgb_to_hsv()
+    .unwrap();
+    assert_eq!(
+        special.data(),
+        [0, 0, 0, 0, 0, 90, 0, 255, 255, 120, 255, 255, 0, 255, 255]
+    );
 }
 
 /// HSV to RGB by the closed form that needs no sectors: with
@@ -122,7 +138,11 @@ fn hsv_converts_back_to_rgb() {
     let hsv = Image::new(8, 6, 3, HSV_IN.to_vec()).unwrap();
     let rgb = hsv.hsv_to_rgb().unwrap();
     for (p, q) in HSV_IN.chunks_exact(3).zip(rgb.data().chunks_exact(3)) {
-        let reference = rgb_formula(2.0 * f64::from(p[0]), f64::from(p[1]) / 255.0, f64::from(p[2]));
+        let reference = rgb_formula(
+            2.0 * f64::from(p[0]),
+            f64::from(p[1]) / 255.0,
+            f64::from(p[2]),
+        );
         for c in 0..3 {
             rounds_to(q[c], reference[c], "hsv to rgb");
         }
@@ -179,7 +199,8 @@ fn nv12_and_yuyv_decode_by_the_inverse_matrix() {
         for y in 0..6 {
             for x in 0..8 {
                 let at = (y / 2) * 8 + (x / 2) * 2;
-                let reference = decode_formula(encoding, luma[y * 8 + x], chroma[at], chroma[at + 1]);
+                let reference =
+                    decode_formula(encoding, luma[y * 8 + x], chroma[at], chroma[at + 1]);
                 for c in 0..3 {
                     rounds_to(rgb.pixel(x, y).unwrap()[c], reference[c], "nv12");
                 }
@@ -239,13 +260,21 @@ fn encoding_matches_gstreamer_colour_bars() {
         235, 128, 235, 128, 219, 16, 219, 138, 188, 154, 188, 16, 173, 42, 173, 26, 173, 128, 78,
         128, 78, 158, 63, 235, 63, 171, 32, 179, 32, 240, 32, 118,
     ];
-    let nv12_601_chroma = [128, 128, 16, 146, 166, 16, 54, 34, 128, 128, 146, 231, 165, 175, 240, 110];
-    let nv12_709_chroma = [128, 128, 16, 138, 154, 16, 42, 26, 128, 128, 158, 235, 171, 179, 240, 118];
+    let nv12_601_chroma = [
+        128, 128, 16, 146, 166, 16, 54, 34, 128, 128, 146, 231, 165, 175, 240, 110,
+    ];
+    let nv12_709_chroma = [
+        128, 128, 16, 138, 154, 16, 42, 26, 128, 128, 158, 235, 171, 179, 240, 118,
+    ];
     for (encoding, yuy2, chroma) in [
         (YCbCr::Bt601Limited, yuy2_601, nv12_601_chroma),
         (YCbCr::Bt709Limited, yuy2_709, nv12_709_chroma),
     ] {
-        assert_eq!(bars.rgb_to_yuyv(encoding).unwrap(), yuy2.repeat(2), "{encoding:?}");
+        assert_eq!(
+            bars.rgb_to_yuyv(encoding).unwrap(),
+            yuy2.repeat(2),
+            "{encoding:?}"
+        );
         let luma: Vec<u8> = yuy2.iter().step_by(2).copied().collect();
         let nv12 = [luma.clone(), luma, chroma.to_vec()].concat();
         assert_eq!(bars.rgb_to_nv12(encoding).unwrap(), nv12, "{encoding:?}");
@@ -280,7 +309,11 @@ fn encoding_matches_the_coefficient_tables() {
     // Coefficients to three decimals: allow the step either side of a value
     // within 0.002 of a half.
     let close = |ours: u8, reference: f64| {
-        let tolerance = if (reference.fract() - 0.5).abs() < 0.002 { 1 } else { 0 };
+        let tolerance = if (reference.fract() - 0.5).abs() < 0.002 {
+            1
+        } else {
+            0
+        };
         assert!(
             (f64::from(ours) - reference.round()).abs() <= f64::from(tolerance),
             "{ours} where the table gives {reference}"
@@ -320,9 +353,19 @@ fn encoding_matches_the_coefficient_tables() {
     let flat = Image::new(2, 2, 3, [90, 140, 30].repeat(4)).unwrap();
     for encoding in [YCbCr::Bt601Limited, YCbCr::Bt601Full, YCbCr::Bt709Limited] {
         let back = Image::from_yuyv(&flat.rgb_to_yuyv(encoding).unwrap(), 2, 2, encoding).unwrap();
-        assert!(back.data().iter().zip(flat.data()).all(|(a, b)| a.abs_diff(*b) <= 2));
+        assert!(
+            back.data()
+                .iter()
+                .zip(flat.data())
+                .all(|(a, b)| a.abs_diff(*b) <= 2)
+        );
         let back = Image::from_nv12(&flat.rgb_to_nv12(encoding).unwrap(), 2, 2, encoding).unwrap();
-        assert!(back.data().iter().zip(flat.data()).all(|(a, b)| a.abs_diff(*b) <= 2));
+        assert!(
+            back.data()
+                .iter()
+                .zip(flat.data())
+                .all(|(a, b)| a.abs_diff(*b) <= 2)
+        );
     }
 }
 
@@ -347,14 +390,19 @@ fn bayer_mosaics_demosaic_bilinearly() {
             }
         }
     }
-    println!("Bayer: {exact} of {} inner samples equal to OpenCV", 4 * 24 * 3);
+    println!(
+        "Bayer: {exact} of {} inner samples equal to OpenCV",
+        4 * 24 * 3
+    );
     assert_eq!(exact, 4 * 24 * 3);
 
     // A flat colour comes back everywhere, the edges included; a ramp
     // along x comes back exactly inside.
     for pattern in patterns.map(|p| p.0) {
         let colour = [200u8, 120, 40];
-        let raw: Vec<u8> = (0..6 * 8).map(|i| colour[pattern.channel(i % 8, i / 8)]).collect();
+        let raw: Vec<u8> = (0..6 * 8)
+            .map(|i| colour[pattern.channel(i % 8, i / 8)])
+            .collect();
         let rgb = Image::from_bayer(&raw, 8, 6, pattern).unwrap();
         assert_eq!(rgb.data(), colour.repeat(48), "{pattern:?}");
         let ramp: Vec<u8> = (0..6 * 8).map(|i| 20 * (i % 8) as u8 + 10).collect();
@@ -362,7 +410,11 @@ fn bayer_mosaics_demosaic_bilinearly() {
         for y in 0..6 {
             for x in 1..7 {
                 let v = 20 * x as u8 + 10;
-                assert_eq!(rgb.pixel(x, y).unwrap(), [v, v, v], "{pattern:?} at {x}, {y}");
+                assert_eq!(
+                    rgb.pixel(x, y).unwrap(),
+                    [v, v, v],
+                    "{pattern:?} at {x}, {y}"
+                );
             }
         }
     }
@@ -370,16 +422,27 @@ fn bayer_mosaics_demosaic_bilinearly() {
 
 /// Bilinear resampling by its definition: the source coordinate of
 /// destination pixel `x` is `(x + 0.5) W / w − 0.5`, clamped to the image.
-fn bilinear_formula(src: &[u8], w: usize, h: usize, x: usize, y: usize, dw: usize, dh: usize) -> f64 {
+fn bilinear_formula(
+    src: &[u8],
+    w: usize,
+    h: usize,
+    x: usize,
+    y: usize,
+    dw: usize,
+    dh: usize,
+) -> f64 {
     let coordinate = |x: usize, dw: usize, w: usize| {
-        let u = ((x as f64 + 0.5) * w as f64 / dw as f64 - 0.5).max(0.0).min((w - 1) as f64);
+        let u = ((x as f64 + 0.5) * w as f64 / dw as f64 - 0.5)
+            .max(0.0)
+            .min((w - 1) as f64);
         let i = u as usize;
         (i, (i + 1).min(w - 1), u - i as f64)
     };
     let (x0, x1, fx) = coordinate(x, dw, w);
     let (y0, y1, fy) = coordinate(y, dh, h);
     let v = |x: usize, y: usize| f64::from(src[y * w + x]);
-    (1.0 - fy) * ((1.0 - fx) * v(x0, y0) + fx * v(x1, y0)) + fy * ((1.0 - fx) * v(x0, y1) + fx * v(x1, y1))
+    (1.0 - fy) * ((1.0 - fx) * v(x0, y0) + fx * v(x1, y0))
+        + fy * ((1.0 - fx) * v(x0, y1) + fx * v(x1, y1))
 }
 
 /// The box filter by refinement: each source pixel repeated `dw` times
@@ -405,10 +468,34 @@ fn area_formula(src: &[u8], w: usize, h: usize, dw: usize, dh: usize) -> Vec<u8>
 fn resizing_follows_the_definitions_and_opencv() {
     let grey = Image::new(8, 6, 1, GRAY.to_vec()).unwrap();
     let cases: [(usize, usize, &[u8], &[u8], &[u8]); 4] = [
-        (5, 4, &RESIZE_NEAREST_5X4, &RESIZE_LINEAR_5X4, &RESIZE_AREA_5X4),
-        (3, 2, &RESIZE_NEAREST_3X2, &RESIZE_LINEAR_3X2, &RESIZE_AREA_3X2),
-        (11, 9, &RESIZE_NEAREST_11X9, &RESIZE_LINEAR_11X9, &RESIZE_AREA_11X9),
-        (16, 12, &RESIZE_NEAREST_16X12, &RESIZE_LINEAR_16X12, &RESIZE_AREA_16X12),
+        (
+            5,
+            4,
+            &RESIZE_NEAREST_5X4,
+            &RESIZE_LINEAR_5X4,
+            &RESIZE_AREA_5X4,
+        ),
+        (
+            3,
+            2,
+            &RESIZE_NEAREST_3X2,
+            &RESIZE_LINEAR_3X2,
+            &RESIZE_AREA_3X2,
+        ),
+        (
+            11,
+            9,
+            &RESIZE_NEAREST_11X9,
+            &RESIZE_LINEAR_11X9,
+            &RESIZE_AREA_11X9,
+        ),
+        (
+            16,
+            12,
+            &RESIZE_NEAREST_16X12,
+            &RESIZE_LINEAR_16X12,
+            &RESIZE_AREA_16X12,
+        ),
     ];
     let (mut exact, mut total) = (0, 0);
     for (w, h, nearest, linear, area) in cases {
@@ -425,14 +512,22 @@ fn resizing_follows_the_definitions_and_opencv() {
         let ours = grey.resize(w, h, Filter::Bilinear).unwrap();
         for y in 0..h {
             for x in 0..w {
-                rounds_to(ours.pixel(x, y).unwrap()[0], bilinear_formula(&GRAY, 8, 6, x, y, w, h), "bilinear");
+                rounds_to(
+                    ours.pixel(x, y).unwrap()[0],
+                    bilinear_formula(&GRAY, 8, 6, x, y, w, h),
+                    "bilinear",
+                );
             }
         }
         exact += within_one_step(ours.data(), linear, "bilinear");
         total += w * h;
 
         let ours = grey.resize(w, h, Filter::Area).unwrap();
-        assert_eq!(ours.data(), area_formula(&GRAY, 8, 6, w, h), "area {w} x {h}");
+        assert_eq!(
+            ours.data(),
+            area_formula(&GRAY, 8, 6, w, h),
+            "area {w} x {h}"
+        );
         // OpenCV's INTER_AREA is the box filter when shrinking, and
         // replicates pixels at an integer enlargement; at 11 x 9 it
         // interpolates instead.
@@ -452,13 +547,18 @@ fn resizing_follows_the_definitions_and_opencv() {
     }
     // A 2 × 1 ramp doubled: 0, 25, 75, 100.
     let ramp = Image::new(2, 1, 1, vec![0, 100]).unwrap();
-    assert_eq!(ramp.resize(4, 1, Filter::Bilinear).unwrap().data(), [0, 25, 75, 100]);
+    assert_eq!(
+        ramp.resize(4, 1, Filter::Bilinear).unwrap().data(),
+        [0, 25, 75, 100]
+    );
 }
 
 #[test]
 fn cropping_and_bad_input() {
     let image = rgb();
-    let crop = image.crop(Rect { x: 2, y: 1, width: 3, height: 4 }).unwrap();
+    let crop = image
+        .crop(Rect { x: 2, y: 1, width: 3, height: 4 })
+        .unwrap();
     for y in 0..4 {
         for x in 0..3 {
             assert_eq!(crop.pixel(x, y), image.pixel(x + 2, y + 1));
@@ -470,25 +570,43 @@ fn cropping_and_bad_input() {
         image.crop(outside),
         Err(ImageError::OutOfBounds { region: outside, width: 8, height: 6 })
     );
-    assert!(image.crop(Rect { x: 0, y: 0, width: 0, height: 1 }).is_err());
-    assert!(image.crop(Rect { x: usize::MAX, y: 0, width: 2, height: 1 }).is_err());
+    assert!(
+        image
+            .crop(Rect { x: 0, y: 0, width: 0, height: 1 })
+            .is_err()
+    );
+    assert!(
+        image
+            .crop(Rect { x: usize::MAX, y: 0, width: 2, height: 1 })
+            .is_err()
+    );
 
     assert_eq!(
         Image::new(2, 2, 3, vec![0; 11]),
         Err(ImageError::Length { needed: 12, got: 11 })
     );
-    assert!(matches!(Image::new(0, 2, 3, vec![]), Err(ImageError::Empty { .. })));
+    assert!(matches!(
+        Image::new(0, 2, 3, vec![]),
+        Err(ImageError::Empty { .. })
+    ));
     assert_eq!(
         image.rgb_to_gray().unwrap().rgb_to_hsv(),
         Err(ImageError::Channels { expected: 3, got: 1 })
     );
-    assert_eq!(image.gray_to_rgb(), Err(ImageError::Channels { expected: 1, got: 3 }));
-    let odd = image.crop(Rect { x: 0, y: 0, width: 3, height: 2 }).unwrap();
+    assert_eq!(
+        image.gray_to_rgb(),
+        Err(ImageError::Channels { expected: 1, got: 3 })
+    );
+    let odd = image
+        .crop(Rect { x: 0, y: 0, width: 3, height: 2 })
+        .unwrap();
     assert_eq!(
         odd.rgb_to_yuyv(YCbCr::Bt601Limited),
         Err(ImageError::OddSize { width: 3, height: 2, rows_in_pairs: false })
     );
-    let odd_rows = image.crop(Rect { x: 0, y: 0, width: 2, height: 3 }).unwrap();
+    let odd_rows = image
+        .crop(Rect { x: 0, y: 0, width: 2, height: 3 })
+        .unwrap();
     assert!(odd_rows.rgb_to_yuyv(YCbCr::Bt601Limited).is_ok());
     assert_eq!(
         odd_rows.rgb_to_nv12(YCbCr::Bt601Limited),

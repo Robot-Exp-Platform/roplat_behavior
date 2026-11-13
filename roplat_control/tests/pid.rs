@@ -101,7 +101,10 @@ fn pid_step(r: f64, d: f64, i0: f64, j: f64, p: f64, t: f64) -> f64 {
 #[test]
 fn a_pd_step_is_critically_damped_and_offset_by_the_load() {
     let (inertia, p, load, target) = ([0.5, 2.0], [8.0, 5.0], [1.5, -3.0], [0.6, -0.4]);
-    let gains = [critically_damped(inertia[0], p[0]), critically_damped(inertia[1], p[1])];
+    let gains = [
+        critically_damped(inertia[0], p[0]),
+        critically_damped(inertia[1], p[1]),
+    ];
     let (kp, kd) = (gains.map(|g| g.0), gains.map(|g| g.1));
     let mut joints = Joints::at_rest(inertia, load);
     let mut control = joint_pd_control(target, kp, kd);
@@ -166,7 +169,10 @@ fn the_integral_winds_up_while_the_joint_is_held() {
         };
         if k < held {
             let integral = r * k as f64 * DT;
-            assert!((tau - (kp * r + ki * integral)).abs() < 1e-9 * tau, "call {k}: {tau}");
+            assert!(
+                (tau - (kp * r + ki * integral)).abs() < 1e-9 * tau,
+                "call {k}: {tau}"
+            );
             continue;
         }
         let t = (k - held) as f64 * DT;
@@ -182,7 +188,10 @@ fn the_integral_winds_up_while_the_joint_is_held() {
         "windup: largest departure {worst:.2e} rad; peak {peak:.4} rad, closed form {expected_peak:.4} rad"
     );
     assert!(worst < 1e-3, "largest departure {worst} rad");
-    assert!((peak - expected_peak).abs() < 1e-3, "{peak} against {expected_peak}");
+    assert!(
+        (peak - expected_peak).abs() < 1e-3,
+        "{peak} against {expected_peak}"
+    );
     assert!(peak > 2.75 * r, "{peak}");
 }
 
@@ -282,7 +291,8 @@ fn a_ramp_lags_by_kd_v_over_kp_under_pd_and_not_under_pid() {
 fn gain(num: &[f64], den: &[f64], w: f64) -> f64 {
     let eval = |c: &[f64]| {
         // Horner in complex arithmetic, s = jω.
-        c.iter().fold((0.0, 0.0), |(re, im), &a| (-im * w + a, re * w))
+        c.iter()
+            .fold((0.0, 0.0), |(re, im), &a| (-im * w + a, re * w))
     };
     let ((nr, ni), (dr, di)) = (eval(num), eval(den));
     (nr.hypot(ni)) / (dr.hypot(di))
@@ -385,8 +395,8 @@ fn a_base_velocity_step_settles_on_the_target_against_a_slip() {
         let t = k as f64 * DT;
         let decay = (-p * t).exp();
         for i in 0..6 {
-            let expected = target[i] * (1.0 - decay + (kp / lag - p) * t * decay)
-                - slip[i] / lag * t * decay;
+            let expected =
+                target[i] * (1.0 - decay + (kp / lag - p) * t * decay) - slip[i] / lag * t * decay;
             worst = worst.max((base.v[i] - expected).abs());
         }
         base.step(u);
@@ -409,7 +419,17 @@ fn a_base_velocity_sine_is_tracked_within_the_error_gain() {
     let mut control = base_velocity_pid_tracking_control(
         move |_, period| {
             elapsed += period;
-            ([a * (w * elapsed.as_secs_f64()).sin(), 0.0, 0.0, 0.0, 0.0, 0.0], false)
+            (
+                [
+                    a * (w * elapsed.as_secs_f64()).sin(),
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+                false,
+            )
         },
         [kp; 6],
         [ki; 6],
@@ -439,7 +459,9 @@ fn a_missing_measurement_ends_the_session() {
     let failed = |step: ControlStep<[f64; 1]>| {
         matches!(
             step,
-            Break(ControlExit::Failed(RobotException::UnprocessableInstructionError(_)))
+            Break(ControlExit::Failed(
+                RobotException::UnprocessableInstructionError(_)
+            ))
         )
     };
     let mut pd = joint_pd_control([0.0], [1.0], [1.0]);
@@ -449,6 +471,8 @@ fn a_missing_measurement_ends_the_session() {
     let mut base = base_velocity_pid_control([0.0; 6], [1.0; 6], [1.0; 6], [1.0; 6]);
     assert!(matches!(
         base(BaseState::from_meas(SpatialSample::EMPTY), PERIOD),
-        Break(ControlExit::Failed(RobotException::UnprocessableInstructionError(_)))
+        Break(ControlExit::Failed(
+            RobotException::UnprocessableInstructionError(_)
+        ))
     ));
 }

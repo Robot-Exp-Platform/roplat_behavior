@@ -160,8 +160,7 @@ fn transforming_a_point_matches_monte_carlo() {
     let point = na::Point3::new(2.0, -1.0, 0.5);
     let sp = na::Matrix3::new(4e-4, 1e-4, 0.0, 1e-4, 1e-4, -5e-5, 0.0, -5e-5, 9e-4);
     let lp = sp.cholesky().unwrap().l();
-    let propagated =
-        UncertainPose::new(x, sx).transform_point(&UncertainPoint::new(point, sp));
+    let propagated = UncertainPose::new(x, sx).transform_point(&UncertainPoint::new(point, sp));
     assert_eq!(propagated.point, x * point);
     let mut rng = Normal(56);
     let samples: Vec<na::Vector3<f64>> = (0..SAMPLES)
@@ -196,7 +195,11 @@ fn parent_frame_covariance_matches_monte_carlo() {
     println!("parent frame: largest scaled difference from Monte Carlo {difference:.4}");
     assert!(difference < 0.02, "{difference}");
     let back = UncertainPose::from_parent_covariance(x, parent);
-    assert!((back.covariance - sx).abs().max() < 1e-15, "{}", back.covariance - sx);
+    assert!(
+        (back.covariance - sx).abs().max() < 1e-15,
+        "{}",
+        back.covariance - sx
+    );
 }
 
 /// Closed-form cases: a base's yaw error swings a point ahead of it
@@ -216,20 +219,31 @@ fn simple_cases_by_hand() {
     for (i, j) in [(1, 1), (1, 5), (5, 1), (5, 5)] {
         expected[(i, j)] = sigma2;
     }
-    assert!((tip.covariance - expected).abs().max() < 1e-15, "{}", tip.covariance);
+    assert!(
+        (tip.covariance - expected).abs().max() < 1e-15,
+        "{}",
+        tip.covariance
+    );
     // In the base's parent frame the lateral direction is -x.
     let parent = tip.parent_covariance();
     assert!((parent[(0, 0)] - sigma2).abs() < 1e-15 && (parent[(0, 5)] + sigma2).abs() < 1e-15);
 
     let mut along_x = na::Matrix6::zeros();
     along_x[(0, 0)] = 4e-4;
-    let turned = UncertainPose::new(pose([0.0; 3], [0.0, 0.0, std::f64::consts::FRAC_PI_2]), along_x);
+    let turned = UncertainPose::new(
+        pose([0.0; 3], [0.0, 0.0, std::f64::consts::FRAC_PI_2]),
+        along_x,
+    );
     let inverse = turned.inverse();
     // The inverse's own frame is the parent; its error there is −R ρ, the
     // turned frame's x error along the parent's y.
     let mut expected = na::Matrix6::zeros();
     expected[(1, 1)] = 4e-4;
-    assert!((inverse.covariance - expected).abs().max() < 1e-15, "{}", inverse.covariance);
+    assert!(
+        (inverse.covariance - expected).abs().max() < 1e-15,
+        "{}",
+        inverse.covariance
+    );
 }
 
 /// At tenths of a radian the first-order result drifts from Monte Carlo:
