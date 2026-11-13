@@ -331,6 +331,13 @@ impl ScalarSCurveProfile {
 
 /// A synchronized jerk-limited move of `N` joints from a start to a target.
 ///
+/// The joints move along the straight line between the two, with the
+/// rest-to-rest double-S profile (Biagiotti and Melchiorri, "Trajectory
+/// Planning for Automatic Machines and Robots", section 3.4) of the line's
+/// bounds: each joint's bound divided by its distance, the smallest of
+/// them. Every joint stays within its velocity, acceleration and jerk bound,
+/// and the move takes the shortest time such a profile can along the line.
+///
 /// A bound may be `f64::INFINITY`. An unbounded jerk gives a trapezoid, an
 /// unbounded acceleration and jerk a constant speed, and an unbounded
 /// velocity and acceleration a move that takes no time. A caller that drives

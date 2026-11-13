@@ -155,8 +155,8 @@ fn hsv_converts_back_to_rgb() {
             f64::from(p[1]) / 255.0,
             f64::from(p[2]),
         );
-        for c in 0..3 {
-            rounds_to(q[c], reference[c], "hsv to rgb");
+        for (ours, reference) in q.iter().zip(reference) {
+            rounds_to(*ours, reference, "hsv to rgb");
         }
     }
     let exact = within_one_step(rgb.data(), &HSV_IN_RGB, "hsv to rgb");
@@ -213,8 +213,8 @@ fn nv12_and_yuyv_decode_by_the_inverse_matrix() {
                 let at = (y / 2) * 8 + (x / 2) * 2;
                 let reference =
                     decode_formula(encoding, luma[y * 8 + x], chroma[at], chroma[at + 1]);
-                for c in 0..3 {
-                    rounds_to(rgb.pixel(x, y).unwrap()[c], reference[c], "nv12");
+                for (ours, reference) in rgb.pixel(x, y).unwrap().iter().zip(reference) {
+                    rounds_to(*ours, reference, "nv12");
                 }
             }
         }
@@ -223,8 +223,8 @@ fn nv12_and_yuyv_decode_by_the_inverse_matrix() {
             for (half, y) in [q[0], q[2]].into_iter().enumerate() {
                 let reference = decode_formula(encoding, y, q[1], q[3]);
                 let pixel = &rgb.data()[(2 * k + half) * 3..][..3];
-                for c in 0..3 {
-                    rounds_to(pixel[c], reference[c], "yuyv");
+                for (ours, reference) in pixel.iter().zip(reference) {
+                    rounds_to(*ours, reference, "yuyv");
                 }
             }
         }
@@ -476,10 +476,13 @@ fn area_formula(src: &[u8], w: usize, h: usize, dw: usize, dh: usize) -> Vec<u8>
     out
 }
 
+/// A destination size and OpenCV's nearest, bilinear and area results.
+type Expected = (usize, usize, &'static [u8], &'static [u8], &'static [u8]);
+
 #[test]
 fn resizing_follows_the_definitions_and_opencv() {
     let grey = Image::new(8, 6, 1, GRAY.to_vec()).unwrap();
-    let cases: [(usize, usize, &[u8], &[u8], &[u8]); 4] = [
+    let cases: [Expected; 4] = [
         (
             5,
             4,
