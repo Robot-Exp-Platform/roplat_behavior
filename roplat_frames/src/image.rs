@@ -374,7 +374,13 @@ impl Image {
         let luma = |p: &[u8; 3]| {
             (299 * u32::from(p[0]) + 587 * u32::from(p[1]) + 114 * u32::from(p[2]) + 500) / 1000
         };
-        let data = self.data.as_chunks::<3>().0.iter().map(|p| luma(p) as u8).collect();
+        let data = self
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| luma(p) as u8)
+            .collect();
         Ok(Image { width: self.width, height: self.height, channels: 1, data })
     }
 
@@ -473,7 +479,9 @@ impl Image {
         let (w, h) = (self.width, self.height);
         let samples: Vec<[f64; 3]> = self
             .data
-            .as_chunks::<3>().0.iter()
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| encoding.encode(*p))
             .collect();
         let mut out: Vec<u8> = samples.iter().map(|s| byte(s[0])).collect();

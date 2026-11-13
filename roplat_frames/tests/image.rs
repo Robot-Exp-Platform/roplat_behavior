@@ -57,7 +57,9 @@ fn grey_is_bt601_luma() {
     let back = grey.gray_to_rgb().unwrap();
     assert!(
         back.data()
-            .as_chunks::<3>().0.iter()
+            .as_chunks::<3>()
+            .0
+            .iter()
             .zip(grey.data())
             .all(|(p, &g)| p == [g, g, g])
     );
@@ -87,7 +89,12 @@ fn hsv_formula([r, g, b]: [f64; 3]) -> [f64; 3] {
 #[test]
 fn hsv_is_opencvs_eight_bit_hsv() {
     let hsv = rgb().rgb_to_hsv().unwrap();
-    for (p, q) in RGB.as_chunks::<3>().0.iter().zip(hsv.data().as_chunks::<3>().0.iter()) {
+    for (p, q) in RGB
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(hsv.data().as_chunks::<3>().0.iter())
+    {
         let [h, s, v] = hsv_formula([p[0], p[1], p[2]].map(|c| f64::from(c) / 255.0));
         // A hue that rounds to 180 is 0.
         rounds_to(if q[0] == 0 && h > 179.0 { 180 } else { q[0] }, h, "hue");
@@ -137,7 +144,12 @@ fn rgb_formula(h_degrees: f64, s: f64, v: f64) -> [f64; 3] {
 fn hsv_converts_back_to_rgb() {
     let hsv = Image::new(8, 6, 3, HSV_IN.to_vec()).unwrap();
     let rgb = hsv.hsv_to_rgb().unwrap();
-    for (p, q) in HSV_IN.as_chunks::<3>().0.iter().zip(rgb.data().as_chunks::<3>().0.iter()) {
+    for (p, q) in HSV_IN
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(rgb.data().as_chunks::<3>().0.iter())
+    {
         let reference = rgb_formula(
             2.0 * f64::from(p[0]),
             f64::from(p[1]) / 255.0,
