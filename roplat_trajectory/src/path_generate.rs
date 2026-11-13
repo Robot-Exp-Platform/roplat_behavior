@@ -173,6 +173,15 @@ impl ScalarSCurveProfile {
             return Self::Trapezoid { delta, v_max, a_max, t_acc, s_acc, t_cruise, t_total };
         }
 
+        // Ramping the acceleration up to a_max and back down gains a_max² /
+        // j_max of speed. Below that the velocity bound is reached before the
+        // acceleration saturates: each jerk phase lasts sqrt(v_max / j_max)
+        // and the acceleration peaks at sqrt(v_max * j_max). Planning with that
+        // peak as the acceleration bound gives exactly this profile in the
+        // branches below (the cruise branch with t1 = t2 = sqrt(v_max / j_max)
+        // and d1 = d2 = 2 v_max sqrt(v_max / j_max)); without it a short move
+        // took the jerk-only profile and overshot v_max.
+        let a_max = a_max.min((v_max * j_max).sqrt());
         let d2 = 2. * a_max.powi(3) / j_max.powi(2);
         let d1 = v_max * (a_max / j_max + v_max / a_max);
 
