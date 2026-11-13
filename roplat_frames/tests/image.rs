@@ -61,7 +61,7 @@ fn grey_is_bt601_luma() {
             .0
             .iter()
             .zip(grey.data())
-            .all(|(p, &g)| p == [g, g, g])
+            .all(|(p, &g)| *p == [g, g, g])
     );
 }
 
