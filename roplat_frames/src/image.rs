@@ -24,7 +24,7 @@
 //!   interpolation.
 //! - **Bayer**: bilinear demosaicing with mirrored edges.
 //! - **Resizing** ([`Filter`]): pixel centres at half-integer coordinates,
-//!   as OpenCV's `resize` and Pillow place them.
+//!   as OpenCV's `resize` places them.
 //!
 //! Results are rounded half away from zero and clamped to `0..=255`. Every
 //! operation returns a new image: one allocation per frame, small next to
@@ -69,7 +69,7 @@ pub struct Rect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Filter {
     /// The source pixel under the centre: `floor((x + 0.5) · s)` (OpenCV's
-    /// `INTER_NEAREST_EXACT`, Pillow's `NEAREST`).
+    /// `INTER_NEAREST_EXACT`; Pillow's `NEAREST` differs from it at some sizes).
     Nearest,
     /// Linear in each direction between the four source pixels around
     /// `(x + 0.5) · s − 0.5`, the coordinate clamped to the image so that
