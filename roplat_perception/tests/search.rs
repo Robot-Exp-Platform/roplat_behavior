@@ -85,31 +85,36 @@ fn random_clouds_match_brute_force() {
     assert!(compared > 3000, "{compared}");
 }
 
-/// A 10 x 10 x 10 grid 0.1 m apart: queries at grid points, edge midpoints
-/// and cell centres meet many points at exactly the same distance, so the
-/// order among ties decides the answer; radii fall exactly on grid
-/// distances.
+/// A 10 x 10 x 10 grid 0.125 m apart, every coordinate and distance exact
+/// in binary: queries at grid points, edge midpoints and cell centres meet
+/// many points at exactly the same distance, so the order among ties
+/// decides the answer; radii fall exactly on grid distances.
 #[test]
 fn ties_on_a_grid_are_broken_by_index() {
+    let step = 0.125;
     let points: Vec<[f64; 3]> = (0..1000)
-        .map(|i| [(i % 10) as f64 * 0.1, (i / 10 % 10) as f64 * 0.1, (i / 100) as f64 * 0.1])
+        .map(|i| [(i % 10) as f64 * step, (i / 10 % 10) as f64 * step, (i / 100) as f64 * step])
         .collect();
     let tree = KdTree::new(&points);
-    let mut ties = 0;
+    let (mut queries, mut ties) = (0, 0);
     for x in 0..19 {
         for y in [0, 5, 9, 13, 18] {
             for z in [0, 7, 18] {
-                let query = [x as f64 * 0.05, y as f64 * 0.05, z as f64 * 0.05];
-                check(&tree, &query, &[0.0, 0.05, 0.1, 0.15, 0.2]);
+                let query = [x as f64, y as f64, z as f64].map(|c| c * step / 2.0);
+                check(&tree, &query, &[0.0, 0.0625, 0.125, 0.1875, 0.25]);
                 let all = brute(&points, &query);
-                if all[7].squared_distance == all[8].squared_distance {
+                // A tie across one of the cut-offs `check` asks for.
+                if [1, 2, 7, 8, 9, 33]
+                    .iter()
+                    .any(|&k| all[k - 1].squared_distance == all[k].squared_distance)
+                {
                     ties += 1;
                 }
+                queries += 1;
             }
         }
     }
-    // The eighth and ninth nearest tie at most queries.
-    assert!(ties > 100, "{ties}");
+    assert!(ties * 2 > queries, "{ties} of {queries}");
 }
 
 /// Repeated points, a cloud on one line (no extent across it), a single
