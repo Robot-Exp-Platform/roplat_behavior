@@ -246,8 +246,8 @@ fn simple_cases_by_hand() {
     );
 }
 
-/// At tenths of a radian the first-order result drifts from Monte Carlo:
-/// printed for the record, and bounded loosely.
+/// Standard deviations of 0.2 rad and 5 cm: the first-order result drifts
+/// from Monte Carlo (2.3 % here, sampling noise of about 1 % included).
 #[test]
 fn large_rotation_errors_are_only_approximate() {
     let x = pose([0.8, -0.3, 0.5], [0.4, -0.7, 1.1]);
@@ -262,5 +262,5 @@ fn large_rotation_errors_are_only_approximate() {
         .collect();
     let difference = scaled_difference(&sample_covariance(&samples), &propagated.covariance);
     println!("compose at 0.2 rad: largest scaled difference from Monte Carlo {difference:.4}");
-    assert!(difference < 0.5, "{difference}");
+    assert!(difference < 0.05, "{difference}");
 }

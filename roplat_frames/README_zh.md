@@ -14,7 +14,7 @@
 - 相机安装位置的手眼标定（`calibration::calibrate_hand_eye`，眼在手上或眼在手外），结果成为树中的固定边。
 - 从图像得到标定板位姿：`target::detect_chessboard` 以亚像素精度找出棋盘格角点，各视角下顺序一致；`target::target_pose` 求标定板位姿。
 - 按 `CameraInfo` 描述的镜头畸变：`lens::distort`、`lens::undistort` 与 `lens::Rectify`，支持 plumb_bob、rational polynomial 与鱼眼模型，相当于 `image_proc` 的校正。
-- 8 位图像的通用处理（`image`）：`Image::crop` 裁剪；`Image::resize` 按最近邻、双线性或像素面积缩放；RGB、灰度（BT.601 亮度）、HSV（OpenCV 的 8 位约定）、NV12 与 YUYV（BT.601 或 BT.709，有限或全范围）、Bayer 原始图（双线性去马赛克）之间的转换。测试逐像素对照公开公式，并对照 OpenCV 4.13 与 GStreamer 1.20 的输出。
+- 8 位图像的通用处理（`image`）：`Image::crop` 裁剪；`Image::resize` 按最近邻、双线性或像素面积缩放；RGB、灰度（BT.601 亮度）、HSV（OpenCV 的 8 位约定）、NV12 与 YUYV（BT.601 或 BT.709，有限或全范围）、Bayer 原始图（双线性去马赛克）之间的转换。测试逐像素对照公开公式，并对照 OpenCV 4.14 与 GStreamer 1.20 的输出。
 - 带协方差的位姿与点（`uncertain`）：`UncertainPose::compose`、`inverse`、`transform_point` 按一阶传播 SE(3) 协方差，采用 Sola 等人《A micro Lie theory for state estimation in robotics》的右扰动约定；`parent_covariance` 换成父坐标系中平移与转角误差的形式。测试与蒙特卡洛对照。
 - feature `roplat`：`JointStateNode`，把关节状态记录到借来的缓冲中。
 - feature `scene`：`scene::place_objects` 把规划场景中的物体移到其跟踪坐标系在某一时刻的位姿，`scene::add_sensed_points` 按图像时刻的相机位姿加入深度读数。

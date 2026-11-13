@@ -1,5 +1,5 @@
-//! Reference outputs of OpenCV 4.13.0 (Apache-2.0), run with numpy 2.4.6
-//! on Python 3.11.15, for `tests/image.rs`. Only the numbers are taken.
+//! Reference outputs of OpenCV 4.14.0 (Apache-2.0), run with numpy 2.4.6
+//! on Python 3.11.18, for `tests/image.rs`. Only the numbers are taken.
 //!
 //! The inputs are bytes of a 31-bit linear congruential generator,
 //! `x ← (1103515245 x + 12345) mod 2³¹`, byte `x >> 23`, scaled to a range

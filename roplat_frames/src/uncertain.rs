@@ -19,11 +19,13 @@
 //! Composition assumes the two poses' errors independent, as when each comes
 //! from a different sensor or calibration; correlated errors need their
 //! cross-covariance, which this module does not take. The results are first
-//! order: exact for the mean pose, and for the covariance when the
-//! perturbations are small. A rotation uncertainty of a few hundredths of a
-//! radian keeps the error of the covariance at about a percent (see the
-//! Monte Carlo comparison in the tests); at tenths of a radian it grows to
-//! tens of percent.
+//! order: the mean pose is the composed one, not the mean of the composed
+//! distribution, and the covariance is exact only in the limit of small
+//! perturbations. Against Monte Carlo in the tests, with standard deviations
+//! of 0.01–0.03 rad and 1–3 cm on poses about a metre apart, every
+//! covariance entry is within 0.7 % of the product of the standard
+//! deviations of its row and column; with 0.2 rad and 5 cm, within 2.3 %.
+//! Larger errors are not characterised.
 //!
 //! Many tools give the covariance of a pose instead as an error of the
 //! translation added in the parent frame and small rotations about the

@@ -1,6 +1,6 @@
 //! Image operations pixel by pixel against two independent references: the
 //! published formulas, computed here in a different form from the library,
-//! and the output of OpenCV 4.13.0 and GStreamer 1.20.3 for the same input.
+//! and the output of OpenCV 4.14.0 and GStreamer 1.20.3 for the same input.
 //!
 //! OpenCV computes in fixed point, so it may differ from the exact formula
 //! by one step; those comparisons allow one step and count the exact
