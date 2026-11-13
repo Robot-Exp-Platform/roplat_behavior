@@ -116,6 +116,7 @@ fn a_pd_step_is_critically_damped_and_offset_by_the_load() {
             assert!((tau[i] - law).abs() < 1e-9, "t = {t}: {tau:?}");
         }
     });
+    println!("PD step: largest departure from the closed form {worst:.2e} rad");
     assert!(worst < 1e-3, "largest departure {worst} rad");
     for i in 0..2 {
         assert!((joints.q[i] - settled[i]).abs() < 1e-6, "{:?}", joints.q);
@@ -138,6 +139,7 @@ fn a_pid_step_settles_on_the_target_under_a_load() {
             worst = worst.max((joints.q[i] - expected).abs());
         }
     });
+    println!("PID step: largest departure from the closed form {worst:.2e} rad");
     assert!(worst < 1e-3, "largest departure {worst} rad");
     for i in 0..2 {
         assert!((joints.q[i] - target[i]).abs() < 1e-6, "{:?}", joints.q);
@@ -172,11 +174,14 @@ fn the_integral_winds_up_while_the_joint_is_held() {
         peak = peak.max(joints.q[0]);
         joints.step([tau]);
     }
-    assert!(worst < 1e-3, "largest departure {worst} rad");
     // The analytic peak: the step's own overshoot plus the integral's push.
     let expected_peak = (0..40_000)
         .map(|k| pid_step(r, 0.0, i0, j, p, k as f64 * DT))
         .fold(0.0f64, f64::max);
+    println!(
+        "windup: largest departure {worst:.2e} rad; peak {peak:.4} rad, closed form {expected_peak:.4} rad"
+    );
+    assert!(worst < 1e-3, "largest departure {worst} rad");
     assert!((peak - expected_peak).abs() < 1e-3, "{peak} against {expected_peak}");
     assert!(peak > 2.75 * r, "{peak}");
 }
@@ -226,6 +231,7 @@ fn a_held_integral_bounds_the_overshoot_after_saturation() {
         peak = peak.max(joints.q[0]);
         joints.step([tau.clamp(-limit, limit)]);
     }
+    println!("held integral {i0:.5}: largest departure {worst:.2e} rad, peak {peak:.4} rad");
     assert!(worst < 1e-3, "largest departure {worst} rad");
     // The unlimited integral overshoots by 179 %, the held one by 60 %.
     assert!(peak > 1.55 * r && peak < 1.65 * r, "{peak}");
@@ -264,6 +270,10 @@ fn a_ramp_lags_by_kd_v_over_kp_under_pd_and_not_under_pid() {
             worst = worst.max((v * t - joints.q[0]).abs());
         }
     });
+    println!(
+        "ramp: PD lag {:.6} rad, (kd v - d) / kp = {expected:.6}; PID largest error {worst:.2e} rad",
+        lag[lag.len() - 1]
+    );
     assert!(worst < 1e-5, "{worst}");
 }
 
@@ -307,6 +317,7 @@ fn a_sine_is_tracked_within_the_error_gain_of_the_loop() {
     });
     let bound = a * gain(&[j, kd, 0.0], &[j, kd, kp], w);
     let peak = steady_peak(&errors, w);
+    println!("sine under PD: peak error {peak:.6} rad, closed form {bound:.6}");
     assert!((peak / bound - 1.0).abs() < 0.01, "{peak} against {bound}");
 
     let (kp, ki, kd) = triple_pole(j, 6.0);
@@ -318,6 +329,7 @@ fn a_sine_is_tracked_within_the_error_gain_of_the_loop() {
     });
     let bound = a * gain(&[j, kd, 0.0, 0.0], &[j, kd, kp, ki], w);
     let peak = steady_peak(&errors, w);
+    println!("sine under PID: peak error {peak:.6} rad, closed form {bound:.6}");
     assert!((peak / bound - 1.0).abs() < 0.01, "{peak} against {bound}");
 }
 
@@ -379,6 +391,7 @@ fn a_base_velocity_step_settles_on_the_target_against_a_slip() {
         }
         base.step(u);
     }
+    println!("base step: largest departure from the closed form {worst:.2e}");
     assert!(worst < 1e-3, "largest departure {worst}");
     for i in 0..6 {
         assert!((base.v[i] - target[i]).abs() < 1e-6, "{:?}", base.v);
@@ -413,6 +426,7 @@ fn a_base_velocity_sine_is_tracked_within_the_error_gain() {
     }
     let bound = a * gain(&[tau, 1.0, 0.0], &[tau + kd, 1.0 + kp, ki], w);
     let peak = steady_peak(&errors, w);
+    println!("base sine: peak error {peak:.6} m/s, closed form {bound:.6}");
     assert!((peak / bound - 1.0).abs() < 0.01, "{peak} against {bound}");
 }
 

@@ -16,6 +16,10 @@
 //!   needs.
 //! - [`lens`] applies and removes the lens distortion a `CameraInfo`
 //!   describes, and rectifies raw images for the pinhole code above.
+//! - [`image`] crops and resizes 8-bit images and converts them between
+//!   RGB, grey, HSV, NV12, YUYV and raw Bayer mosaics.
+//! - [`uncertain`] carries poses and points with covariances through
+//!   composition, inversion and transformation, to first order.
 //! - Feature `roplat` adds [`roplat::JointStateNode`], which records joint
 //!   states into a borrowed buffer.
 //! - Feature `scene` adds [`scene`]: planning-scene objects moved to their
@@ -29,9 +33,11 @@
 
 mod buffer;
 pub mod calibration;
+pub mod image;
 pub mod lens;
 pub mod target;
 mod tree;
+pub mod uncertain;
 
 #[cfg(feature = "roplat")]
 pub mod roplat;
