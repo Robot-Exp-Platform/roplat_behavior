@@ -14,6 +14,7 @@
 - `tabletop`：一次完成全部步骤（`segment_tabletop`），给出桌面和其上的每个物体。
 - `registration`：点到点（`icp`）或点到面（`icp_point_to_plane`）ICP，求已知模型的物体位姿。
 - `normals`：表面法向与曲率（`estimate_normals`，即 PCL 的 `NormalEstimation`），以及沿法向生长的光滑区域（`smooth_regions`，即 PCL 的 `RegionGrowing`），可把在棱处相接的表面分开。
+- `search`：用 k-d 树（`KdTree`）做精确的近邻查询：任意查询点的最近点、`k` 个最近点（`k_nearest`，即 PCL 的 `nearestKSearch`）与半径内的全部点（`within`，即 PCL 的 `radiusSearch`）。结果按距离、再按下标排序，与暴力搜索逐条一致（[`search.rs`](tests/search.rs)）。
 
 深度图在 [`roplat_scene`](../roplat_scene/README_zh.md) 中变成点（`points::depth_to_points`），找到的物体交给 [`roplat_grasp`](../roplat_grasp/README_zh.md) 与规划场景。
 

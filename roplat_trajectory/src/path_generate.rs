@@ -173,6 +173,15 @@ impl ScalarSCurveProfile {
             return Self::Trapezoid { delta, v_max, a_max, t_acc, s_acc, t_cruise, t_total };
         }
 
+        // Ramping the acceleration up to a_max and back down gains a_max² /
+        // j_max of speed. Below that the velocity bound is reached before the
+        // acceleration saturates: each jerk phase lasts sqrt(v_max / j_max)
+        // and the acceleration peaks at sqrt(v_max * j_max). Planning with that
+        // peak as the acceleration bound gives exactly this profile in the
+        // branches below (the cruise branch with t1 = t2 = sqrt(v_max / j_max)
+        // and d1 = d2 = 2 v_max sqrt(v_max / j_max)); without it a short move
+        // took the jerk-only profile and overshot v_max.
+        let a_max = a_max.min((v_max * j_max).sqrt());
         let d2 = 2. * a_max.powi(3) / j_max.powi(2);
         let d1 = v_max * (a_max / j_max + v_max / a_max);
 
@@ -321,6 +330,13 @@ impl ScalarSCurveProfile {
 }
 
 /// A synchronized jerk-limited move of `N` joints from a start to a target.
+///
+/// The joints move along the straight line between the two, with the
+/// rest-to-rest double-S profile (Biagiotti and Melchiorri, "Trajectory
+/// Planning for Automatic Machines and Robots", section 3.4) of the line's
+/// bounds: each joint's bound divided by its distance, the smallest of
+/// them. Every joint stays within its velocity, acceleration and jerk bound,
+/// and the move takes the shortest time such a profile can along the line.
 ///
 /// A bound may be `f64::INFINITY`. An unbounded jerk gives a trapezoid, an
 /// unbounded acceleration and jerk a constant speed, and an unbounded
