@@ -359,7 +359,10 @@ fn a_box_link_sweeping_through_a_thin_plate_is_found() {
 
 fn assert_reach<const N: usize>(reach: [f64; N], expected: [f64; N]) {
     assert!(
-        reach.iter().zip(&expected).all(|(r, e)| (r - e).abs() < 1e-12),
+        reach
+            .iter()
+            .zip(&expected)
+            .all(|(r, e)| (r - e).abs() < 1e-12),
         "reach {reach:?}, not {expected:?}"
     );
 }

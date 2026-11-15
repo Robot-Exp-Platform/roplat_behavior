@@ -191,11 +191,7 @@ impl<const N: usize> PlanningScene<N> {
     /// (m), or 1 for a prismatic joint, which moves the body as far as it
     /// slides. The group's joints may be anywhere between `lower` and
     /// `upper`. Bodies in the world have none.
-    fn reaches(
-        &self,
-        lower: &[f64; N],
-        upper: &[f64; N],
-    ) -> Vec<Vec<(usize, Option<usize>, f64)>> {
+    fn reaches(&self, lower: &[f64; N], upper: &[f64; N]) -> Vec<Vec<(usize, Option<usize>, f64)>> {
         let mut into = vec![None; self.model.links.len()];
         for (j, joint) in self.model.joints.iter().enumerate() {
             into[joint.child] = Some(j);

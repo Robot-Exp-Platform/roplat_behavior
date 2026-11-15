@@ -46,7 +46,8 @@ const BOX_ARM: &str = r#"<robot name="planar">
 /// from 0.010 to 0.012, x from 1.05 to 1.15 m, z within 2.5 cm.
 fn box_arm() -> PlanningScene<2> {
     let model = RobotModel::from_urdf_str(BOX_ARM).unwrap();
-    let mut scene = PlanningScene::new(model, ["j1", "j2"], |name: &str| PathBuf::from(name)).unwrap();
+    let mut scene =
+        PlanningScene::new(model, ["j1", "j2"], |name: &str| PathBuf::from(name)).unwrap();
     scene
         .add_object(
             "plate",
@@ -70,7 +71,8 @@ fn a_box_link_near_a_thin_plate_is_measured_as_it_is() {
         // The outer link's upper face lies 2 mm above its axis; the plate's
         // lower edge at x = 1.15 m, y = 0.010 m is the nearest to it.
         let gap = 0.010 * theta.cos() - 1.15 * theta.sin() - 0.002;
-        let pose = Isometry3::rotation(Vector3::z() * theta) * Isometry3::translation(0.9, 0.0, 0.0);
+        let pose =
+            Isometry3::rotation(Vector3::z() * theta) * Isometry3::translation(0.9, 0.0, 0.0);
         let link = Solid::cuboid(pose, [0.3, 0.002, 0.002]);
         assert!((box_box(&link, &plate) - gap).abs() < 1e-12);
         let nearest = scene.clearance(&[theta, 0.0]).unwrap();
@@ -108,11 +110,8 @@ fn box_pairs_agree_with_gjk_hulls_and_a_closed_form() {
         let exact = box_box(&a, &b);
         let scene = scene_distance(&a, &b);
         let pos12 = a.pose.inv_mul(&b.pose);
-        let gjk = distance_support_map_support_map(
-            &pos12,
-            &Cuboid::new(a.half),
-            &Cuboid::new(b.half),
-        );
+        let gjk =
+            distance_support_map_support_map(&pos12, &Cuboid::new(a.half), &Cuboid::new(b.half));
         let hull = |s: &Solid| SharedShape::convex_hull(&corners(&s.half)).unwrap();
         let by_hull = query::distance(&a.pose, &*hull(&a), &b.pose, &*hull(&b)).unwrap();
         let (by_parry, _) = parry_default(&a, &b);
@@ -321,7 +320,13 @@ enum Kind {
     Voxels,
 }
 
-const LINKS: [Kind; 5] = [Kind::Box, Kind::Mesh, Kind::Sphere, Kind::Capsule, Kind::Cylinder];
+const LINKS: [Kind; 5] = [
+    Kind::Box,
+    Kind::Mesh,
+    Kind::Sphere,
+    Kind::Capsule,
+    Kind::Cylinder,
+];
 const OBJECTS: [Kind; 6] = [
     Kind::Box,
     Kind::Mesh,
@@ -348,7 +353,13 @@ struct Solid {
 
 impl Solid {
     fn cuboid(pose: Isometry3<f64>, half: [f64; 3]) -> Self {
-        Self { kind: Kind::Box, pose, half: half.into(), cells: Vec::new(), prisms: None }
+        Self {
+            kind: Kind::Box,
+            pose,
+            half: half.into(),
+            cells: Vec::new(),
+            prisms: None,
+        }
     }
 
     /// Sizes log-uniform, so thin plates and long rods come as often as
@@ -356,9 +367,7 @@ impl Solid {
     fn random(kind: Kind, random: &mut Random) -> Self {
         let mut cells = Vec::new();
         let half = match kind {
-            Kind::Box | Kind::Mesh => {
-                Vector3::from_fn(|_, _| random.size(1e-3, 0.3))
-            }
+            Kind::Box | Kind::Mesh => Vector3::from_fn(|_, _| random.size(1e-3, 0.3)),
             Kind::Sphere => Vector3::new(random.size(2e-3, 0.2), 0.0, 0.0),
             Kind::Capsule | Kind::Cylinder => {
                 Vector3::new(random.size(1e-3, 0.1), 0.0, random.size(2e-3, 0.3))
@@ -548,7 +557,11 @@ fn scene_distance(a: &Solid, b: &Solid) -> f64 {
     let mut scene = PlanningScene::new(model, [], |name: &str| PathBuf::from(name)).unwrap();
     scene.set_base(a.pose);
     if b.kind == Kind::Voxels {
-        let points: Vec<[f64; 3]> = b.cells.iter().map(|&cell| b.cell_centre(cell).into()).collect();
+        let points: Vec<[f64; 3]> = b
+            .cells
+            .iter()
+            .map(|&cell| b.cell_centre(cell).into())
+            .collect();
         let voxels = scene.add_points("b", &points, b.edge(), b.pose).unwrap();
         assert_eq!(voxels, b.cells.len());
     } else {
@@ -611,7 +624,12 @@ fn truth(a: &Solid, b: &Solid) -> Truth {
     use Kind::*;
     let d = match (a.kind, b.kind) {
         (_, Voxels) => {
-            return b.cubes().iter().map(|cube| truth(a, cube)).reduce(Truth::min).unwrap();
+            return b
+                .cubes()
+                .iter()
+                .map(|cube| truth(a, cube))
+                .reduce(Truth::min)
+                .unwrap();
         }
         (Voxels, _) => return truth(b, a),
         (Cylinder, Sphere) => point_cylinder(&b.centre(), a) - b.half.x,
@@ -786,7 +804,11 @@ fn box_box(a: &Solid, b: &Solid) -> f64 {
     let edges_b = box_edges(b);
     box_edges(a)
         .iter()
-        .flat_map(|(p, q)| edges_b.iter().map(move |(r, s)| segment_segment(p, q, r, s)))
+        .flat_map(|(p, q)| {
+            edges_b
+                .iter()
+                .map(move |(r, s)| segment_segment(p, q, r, s))
+        })
         .chain(corners)
         .fold(f64::INFINITY, f64::min)
 }
