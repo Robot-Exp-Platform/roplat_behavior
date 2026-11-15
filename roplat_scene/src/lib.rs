@@ -36,7 +36,10 @@
 //! The planners sample a motion between two configurations every few
 //! hundredths of a radian, which can step over a thin obstacle.
 //! [`PlanningScene::motion_contact`] checks a straight joint motion as a
-//! whole instead, with no step to choose; see [`motion`].
+//! whole instead, with no step to choose; see [`motion`]. Or the step can
+//! be chosen from the scene: [`PlanningScene::reach`] bounds how far each
+//! joint moves the robot's points, which `resolution_for_travel` in
+//! `roplat_trajectory` turns into a resolution.
 //!
 //! The scene is plain data with no clock, registry or runtime. Its owner
 //! moves, attaches and detaches objects between queries; a query poses the

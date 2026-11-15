@@ -14,6 +14,7 @@
 - 它通过 `CollisionCheck` 回答 [`roplat_trajectory`](../roplat_trajectory/README_zh.md) 中 `plan_joint_path` 向调用方要的有效性检查（`scene.is_free(q)`）；`contacts` 列出接触，`clearance` 给出最近的一对。
 - `set_pair_padding` 让某一对连杆或物体使用自己的安全间隙，取代场景的统一间隙，位形检查与整段运动检查都按它计算。
 - `motion_contact` 与 `motion_is_free` 用保守推进整体检查一段关节直线运动，两个采样点之间的薄障碍不会被跳过。
+- `reach` 给出规划组每个关节所带动的任何一点离该关节轴线的最远距离（移动关节为 1），在规划器搜索的上下限之内成立；`roplat_trajectory` 的 `resolution_for_travel` 据此选采样分辨率，使相邻两次检查之间任何一点的位移不超过给定值。
 - 料箱、货架等凹形物体可保留内部空间：`add_concave_object`（网格文件）与 `add_trimesh`（代码中给出的三角形）用 V-HACD 把它们分成若干凸块，而不是取一个凸包。`decompose_link` 以同样方式分解凹形连杆的网格。
 - 命名位姿（`NamedPoses`）与工具安装位置（`EndEffector`），即规划代码需要的 SRDF 内容，在代码中构造。
 

@@ -14,6 +14,7 @@ The scene:
 - Through `CollisionCheck` it answers the validity check `plan_joint_path` in [`roplat_trajectory`](../roplat_trajectory/README.md) asks of its caller (`scene.is_free(q)`); `contacts` lists the contacts and `clearance` gives the nearest pair.
 - `set_pair_padding` lets a pair keep its own clearance in place of the scene's padding, in configuration and whole-motion checks alike.
 - `motion_contact` and `motion_is_free` check a straight joint motion as a whole by conservative advancement, so a thin obstacle between two samples is not stepped over.
+- `reach` gives, for each joint of the group, how far any point it moves can lie from its axis (1 for a prismatic joint), over the bounds the planner searches: what `resolution_for_travel` in `roplat_trajectory` needs to pick a sampling resolution at which no point moves farther than a given travel between two checks.
 - Concave objects such as bins and shelves keep their hollows: `add_concave_object` (a mesh file) and `add_trimesh` (triangles built in code) split them into convex parts by V-HACD instead of one hull. `decompose_link` splits a concave link's meshes the same way.
 - Named configurations (`NamedPoses`) and tool placement (`EndEffector`), the parts of an SRDF that planning code needs, built in code.
 
