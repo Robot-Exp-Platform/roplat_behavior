@@ -28,7 +28,10 @@
 //! [`occupancy::OccupancyMap`] keeps sensed obstacles current across scans,
 //! clearing the voxels rays pass through, and
 //! [`PlanningScene::set_occupancy`] puts it into the scene.
-//! Distances come from [parry3d-f64](https://parry.rs).
+//! Distances come from [parry3d-f64](https://parry.rs), with one exception:
+//! parry 0.25's routine for two boxes overestimates their distance, so the
+//! scene measures box against box by GJK, as parry does every other pair of
+//! convex shapes but a ball (which it measures in closed form).
 //!
 //! The planners sample a motion between two configurations every few
 //! hundredths of a radian, which can step over a thin obstacle.
@@ -39,6 +42,7 @@
 //! moves, attaches and detaches objects between queries; a query poses the
 //! robot without changing the scene.
 
+mod distance;
 pub mod drawing;
 mod mesh;
 pub mod motion;
@@ -626,15 +630,14 @@ impl<const N: usize> PlanningScene<N> {
                 }
                 for (pa, sa) in &a.parts {
                     for (pb, sb) in &b.parts {
-                        let distance = match query::distance(pa, sa.as_ref(), pb, sb.as_ref()) {
-                            Ok(distance) if distance > 0.0 => distance,
+                        let mut distance = distance::distance(pa, sa.as_ref(), pb, sb.as_ref());
+                        if distance <= 0.0 {
                             // Overlapping: the depth, from the contact.
-                            Ok(_) => query::contact(pa, sa.as_ref(), pb, sb.as_ref(), 0.0)
+                            distance = query::contact(pa, sa.as_ref(), pb, sb.as_ref(), 0.0)
                                 .ok()
                                 .flatten()
-                                .map_or(0.0, |contact| contact.dist),
-                            Err(_) => 0.0,
-                        };
+                                .map_or(0.0, |contact| contact.dist);
+                        }
                         if nearest
                             .as_ref()
                             .is_none_or(|nearest| distance < nearest.distance)

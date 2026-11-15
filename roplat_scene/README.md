@@ -30,7 +30,7 @@ For a viewer, `meshes` gives every link and object as world-frame triangles (RVi
 
 URDF boxes, spheres, cylinders and capsules keep their shape. A mesh (OBJ or STL) becomes the convex hull of its vertices, which contains the mesh: the hull may report a contact the mesh would not, never the reverse. A hull fills a concave object's hollows, so nothing can reach into a bin or a shelf unless the object is split into convex parts as above.
 
-Collision geometry is computed by `parry3d-f64` (0.25, the last release on nalgebra); there is no native dependency.
+Collision geometry is computed by `parry3d-f64` (0.25, the last release on nalgebra); there is no native dependency. One of its routines is not used: parry 0.25 measures two boxes with a routine made for contacts, which can report several times the true distance when faces are nearly parallel (2.3 cm for a box link 1.1 mm from a thin plate), and a whole-motion check that advances by such a distance can step past a contact. The scene measures box against box, also against sensed voxels, by GJK, as parry measures every other pair of convex shapes but a ball. Against a capsule or a cylinder GJK can stop before it converges, up to 0.033 mm too far in the tests, so a whole motion may graze an obstacle that deep but cannot pass through anything thicker.
 
 ## Related crates
 

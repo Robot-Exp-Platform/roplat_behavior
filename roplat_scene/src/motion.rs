@@ -25,12 +25,21 @@
 //! steps shrink with the clearance. A pair whose clearance above the
 //! padding falls to [`MOTION_TOLERANCE`] counts as touching, which ends the
 //! advance where a motion grazes an obstacle.
+//!
+//! The certificate is only as good as the distances: an advance by a
+//! distance measured too large by `e` can carry a pair up to `e` into its
+//! padding between two measurements. Pairs with a ball are measured in
+//! closed form, the rest by GJK, exact to rounding between polyhedra and up
+//! to 3.3e-5 m too far against a capsule or a cylinder in the tests, a
+//! third of [`MOTION_TOLERANCE`]: a motion may graze that deep, and cannot
+//! pass through anything thicker. parry 0.25's own routine for two boxes,
+//! which can overestimate by centimetres, is not used.
 
 use nalgebra as na;
 use parry3d_f64::{bounding_volume::Aabb, query, shape::SharedShape};
 use roplat_description::JointKind;
 
-use crate::{Body, CollisionCheck, Contact, Mount, PlanningScene};
+use crate::{Body, CollisionCheck, Contact, Mount, PlanningScene, distance};
 
 /// Clearance above the padding (m) at which a motion counts as touching.
 pub const MOTION_TOLERANCE: f64 = 1e-4;
@@ -232,9 +241,7 @@ fn pair_distance(a: &Body<'_>, b: &Body<'_>, reach: f64) -> Option<f64> {
             if gap(ba, bb) > reach {
                 continue;
             }
-            // Every shape built here is convex or a compound of convex
-            // parts. Were a pair unsupported, it would count as touching.
-            let distance = query::distance(pa, sa.as_ref(), pb, sb.as_ref()).unwrap_or(0.0);
+            let distance = distance::distance(pa, sa.as_ref(), pb, sb.as_ref());
             nearest = Some(nearest.map_or(distance, |nearest| nearest.min(distance)));
         }
     }
