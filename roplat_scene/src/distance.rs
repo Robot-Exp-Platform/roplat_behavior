@@ -28,10 +28,10 @@ use parry3d_f64::{
 };
 
 /// Distance (m) between `a` posed at `pa` and `b` at `pb`, zero when they
-/// overlap. Between polyhedra GJK finds it to rounding. Against a capsule
-/// or a cylinder it may stop before it converges, with points on the two
-/// shapes slightly farther apart than the nearest: up to 3.3e-5 m in the
-/// tests (see [`motion`](crate::motion) for what that allows). Every shape
+/// overlap. GJK may stop before it converges, with points on the two
+/// shapes slightly farther apart than the nearest: between polyhedra up to
+/// 1.2e-7 m in the tests, against a capsule or a cylinder up to 3.3e-5 m
+/// (see [`motion`](crate::motion) for what that allows). Every shape
 /// the scene builds is convex or a compound of convex parts; were a pair
 /// unsupported, it would count as touching.
 pub(crate) fn distance(

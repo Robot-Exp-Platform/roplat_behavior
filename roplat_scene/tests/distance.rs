@@ -190,7 +190,7 @@ impl Truth {
         (lower + upper) / 2.0
     }
 
-    /// Whether `d` is the distance, to within rounding, or, with a capsule
+    /// Whether `d` is the distance, to within [`tolerance`], or, with a capsule
     /// or a cylinder (`round`), to within [`ROUND`].
     fn admits(self, d: f64, round: bool) -> bool {
         let (lower, upper) = self.bounds();
@@ -199,9 +199,11 @@ impl Truth {
     }
 }
 
-/// Rounding in the closed forms and in GJK between polyhedra.
+/// How far GJK may miss a distance between polyhedra: with faces nearly
+/// parallel it stops early too, up to 1.2e-7 m (2e-6 of the distance) in
+/// these tests. The closed forms are exact to rounding.
 fn tolerance(d: f64) -> f64 {
-    1e-9 + 1e-7 * d
+    1e-7 + 1e-5 * d
 }
 
 /// How far GJK may miss a distance to a capsule or a cylinder (m): its

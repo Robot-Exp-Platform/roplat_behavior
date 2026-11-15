@@ -29,8 +29,8 @@
 //! The certificate is only as good as the distances: an advance by a
 //! distance measured too large by `e` can carry a pair up to `e` into its
 //! padding between two measurements. Pairs with a ball are measured in
-//! closed form, the rest by GJK, exact to rounding between polyhedra and up
-//! to 3.3e-5 m too far against a capsule or a cylinder in the tests, a
+//! closed form, the rest by GJK, up to 1.2e-7 m too far between polyhedra
+//! and 3.3e-5 m against a capsule or a cylinder in the tests, a
 //! third of [`MOTION_TOLERANCE`]: a motion may graze that deep, and cannot
 //! pass through anything thicker. parry 0.25's own routine for two boxes,
 //! which can overestimate by centimetres, is not used.
