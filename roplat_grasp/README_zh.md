@@ -9,7 +9,7 @@
 ## 内容
 
 - `grasps` 列出长方体、圆柱或球体的 `Grasp` 候选：手指能以夹爪可达的开口宽度横跨物体闭合的每个工具位姿，由优到劣（先从上方接近）。
-- `plan_pick` 在 [`PlanningScene`](../roplat_scene/README_zh.md) 中按顺序尝试候选，返回第一个可行候选的三段关节路径：到预抓取位姿的无碰撞路径、直线接近抓取位姿、带着物体直线抬起。每个失败的候选都说明原因。无碰撞路径用 `PlanningScene::motion_is_free` 按整段运动检查，再薄的障碍物也不会被跨过（按 `PlannerOptions::resolution` 间隔检查位形时，比连杆在两次检查之间扫过的距离更薄的板会被跨过；该分辨率不再使用）；直线接近与抬起按笛卡尔步长检查（`CartesianPathOptions`）。`plan_pick_motion` 做同样的规划，但每一段都整体检查。
+- `plan_pick` 在 [`PlanningScene`](../roplat_scene/README_zh.md) 中按顺序尝试候选，返回第一个可行候选的三段关节路径：到预抓取位姿的无碰撞路径、直线接近抓取位姿、带着物体直线抬起。每个失败的候选都说明原因。无碰撞路径用 `PlanningScene::motion_is_free` 按整段运动检查，再薄的障碍物也不会被跨过（按 `PlannerOptions::resolution` 间隔检查位形时，比连杆在两次检查之间扫过的距离更薄的板会被跨过；该分辨率不再使用）；直线接近与抬起按笛卡尔步长检查（`CartesianPathOptions`）。`plan_pick_motion` 做同样的规划，但每一段都整体检查。整段检查的可靠程度取决于 `roplat_scene` 的距离：两个盒体之间它取 parry 0.25 的长方体对长方体距离，这个距离可能偏大（细长盒体与薄板相距 1.1 mm 时算成 2.3 cm），盒体连杆因而仍可能被判定为能穿过薄盒体；有一方不是盒体的组合用 GJK 计算，不受影响。
 - `plan_place`（与 `plan_place_motion`）把手中的物体放下：带着物体到第一个可行放置位姿上方的路径、直线下放、松开后的直线后撤。
 - `GraspCheck` 依据任何夹爪都会报告的开口宽度判断是否抓住：抓住、空抓、宽度不符，或与驱动自身的判断不一致。
 - `carried_mass` 在抬起后由腕部力传感器确认负载。
