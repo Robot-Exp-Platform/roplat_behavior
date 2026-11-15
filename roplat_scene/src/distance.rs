@@ -189,11 +189,7 @@ impl<'a> Rounded<'a> {
 /// along `n = −p / |p|`, bounds the difference by the plane `n·x = n·s`, at
 /// `−n·s` from the origin. `s` joins the simplex, which keeps only the
 /// face its new nearest point lies on.
-fn separation(
-    pos12: &na::Isometry3<f64>,
-    g1: &dyn SupportMap,
-    g2: &dyn SupportMap,
-) -> f64 {
+fn separation(pos12: &na::Isometry3<f64>, g1: &dyn SupportMap, g2: &dyn SupportMap) -> f64 {
     let support = |n: &na::Vector3<f64>| -> na::Vector3<f64> {
         g1.local_support_point(n).coords - g2.support_point(pos12, &-n).coords
     };
