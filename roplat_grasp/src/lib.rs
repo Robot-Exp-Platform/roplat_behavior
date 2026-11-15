@@ -11,8 +11,9 @@
 //!   that works as three joint paths: a collision-free path to the
 //!   pre-grasp pose, a straight approach to the grasp, and a straight lift
 //!   with the object attached. For each candidate that fails it says why.
-//!   [`plan_pick_motion`] does the same with every segment checked whole
-//!   rather than sampled.
+//!   The free path is checked as whole motions, so no thin obstacle is
+//!   stepped over; the straight motions at their Cartesian steps.
+//!   [`plan_pick_motion`] does the same with every segment checked whole.
 //! - [`plan_place`] (and [`plan_place_motion`]) puts the held object down:
 //!   a path carrying it to above the first placement that works, a
 //!   straight descent onto it, and a straight retreat once released.

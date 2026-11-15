@@ -392,3 +392,181 @@ fn places_the_picked_block_elsewhere_on_the_table() {
         assert!((back.translation.vector - Vector3::new(0.0, 0.0, -0.1)).norm() < 1e-4);
     }
 }
+
+/// A coarse sampled check: a link certainly passes a plate between two of
+/// its configurations. The defect does not depend on it; a check every
+/// 0.02 rad steps over plates thinner than a link's sweep in 0.02 rad.
+const COARSE: f64 = 0.1;
+
+/// `scene` with a plate 1 mm thick across the straight motion from `from`
+/// to `to`, midway between the two configurations a check every
+/// [`COARSE`] looks at at which one of the fingers moves farthest,
+/// perpendicular to that motion. It is the control: every such
+/// configuration is clear of the plate, the straight motion is not, and
+/// `plan_joint_path` at that resolution takes the straight line. Returns
+/// the scene, the finger and how far it moves between the two
+/// configurations.
+fn plate_across(
+    scene: &PlanningScene<6>,
+    from: [f64; 6],
+    to: [f64; 6],
+) -> (PlanningScene<6>, &'static str, f64) {
+    let (plated, link, moved) = ["left", "right"]
+        .into_iter()
+        .find_map(|link| plate_for(scene, from, to, link).map(|(s, m)| (s, link, m)))
+        .expect("a plate between two checks in the way of a finger");
+    let options = roplat_trajectory::PlannerOptions {
+        resolution: COARSE,
+        ..roplat_trajectory::PlannerOptions::default()
+    };
+    let sampled =
+        roplat_trajectory::plan_joint_path(from, to, LOWER, UPPER, |q| plated.is_free(q), options)
+            .unwrap();
+    assert_eq!(sampled, vec![from, to], "the sampled check sees the plate");
+    (plated, link, moved)
+}
+
+/// The plate across `link`'s farthest move between two checks, if every
+/// checked configuration is clear of it and the straight motion is not.
+fn plate_for(
+    scene: &PlanningScene<6>,
+    from: [f64; 6],
+    to: [f64; 6],
+    link: &str,
+) -> Option<(PlanningScene<6>, f64)> {
+    let distance = (0..6).map(|i| (to[i] - from[i]).abs()).fold(0.0, f64::max);
+    let steps = (distance / COARSE).ceil() as usize;
+    let at_sample = |k: usize| -> [f64; 6] {
+        std::array::from_fn(|i| from[i] + (k as f64 / steps as f64) * (to[i] - from[i]))
+    };
+    let point = |k: usize| {
+        scene
+            .link_pose(link, &at_sample(k))
+            .unwrap()
+            .translation
+            .vector
+    };
+    let k = (0..steps)
+        .max_by(|&a, &b| {
+            let d = |k: usize| (point(k + 1) - point(k)).norm();
+            d(a).total_cmp(&d(b))
+        })
+        .unwrap();
+    let (a, b) = (point(k), point(k + 1));
+    let rotation = nalgebra::UnitQuaternion::rotation_between(&Vector3::z(), &(b - a))
+        .unwrap_or_else(nalgebra::UnitQuaternion::identity);
+    let mut plated = scene.clone();
+    plated
+        .add_object(
+            "plate",
+            &Geometry::Box { size: [0.015, 0.015, 0.001] },
+            Isometry3::from_parts(((a + b) / 2.0).into(), rotation),
+        )
+        .unwrap();
+    let clear = (1..=steps).all(|j| plated.is_free(&at_sample(j)));
+    (clear && !plated.motion_is_free(&from, &to)).then(|| (plated, (b - a).norm()))
+}
+
+/// A plate 1 mm thick across the free path of a pick (in the way of a
+/// finger) and of a place (in the way of the held block), between two of
+/// the configurations a sampled check would look at, is not stepped over:
+/// the free paths are checked as whole motions, whatever the resolution.
+#[test]
+fn a_thin_plate_across_the_free_path_is_not_stepped_over() {
+    let at = Vector3::new(0.45, 0.1, 0.24);
+    let model = model();
+    let hand = hand();
+    let candidates = grasps(
+        &Geometry::Box { size: BLOCK },
+        &Isometry3::translation(at.x, at.y, at.z),
+        &GraspOptions::default(),
+    );
+    let planner = roplat_trajectory::PlannerOptions {
+        resolution: COARSE,
+        ..roplat_trajectory::PlannerOptions::default()
+    };
+    let pick = |scene: &PlanningScene<6>| {
+        plan_pick(
+            scene,
+            &hand,
+            "block",
+            Some("table"),
+            &candidates,
+            start(),
+            LOWER,
+            UPPER,
+            inverse(&model),
+            PickOptions { planner, ..PickOptions::default() },
+        )
+        .unwrap_or_else(|e| panic!("{e}"))
+    };
+    // Where the free path goes without the plate, then with it.
+    let clear = scene(at);
+    let picked = pick(&clear);
+    let q_pre = *picked.to_pregrasp.last().unwrap();
+    let (plated, finger, moved) = plate_across(&clear, start(), q_pre);
+    let plan = pick(&plated);
+    assert_eq!(plan.to_pregrasp.last(), Some(&q_pre));
+    assert!(plan.to_pregrasp.len() > 2);
+    for pair in plan.to_pregrasp.windows(2) {
+        assert!(plated.motion_is_free(&pair[0], &pair[1]), "{pair:?}");
+        // An independent look, not resting on the scene's distances:
+        // configurations 2 mrad apart, at which a finger moves about 2 mm,
+        // less than its own thickness.
+        assert!(
+            roplat_trajectory::segment_is_valid(&pair[0], &pair[1], 0.002, |q| plated.is_free(q)),
+            "{pair:?}"
+        );
+    }
+    println!(
+        "FIX14B grasp thin plate, pick: finger {finger} moves {moved:.3} m between two checks; the free path has {} waypoints",
+        plan.to_pregrasp.len()
+    );
+
+    // The place, carrying the block from where the pick lifted it.
+    let mut carrying = clear.clone();
+    carrying
+        .attach(
+            "block",
+            "flange",
+            &hand.links(),
+            &picked.grasp_configuration(),
+        )
+        .unwrap();
+    let lifted = *picked.lift.last().unwrap();
+    let target = Isometry3::translation(0.5, -0.15, 0.24);
+    let place = |scene: &PlanningScene<6>| {
+        plan_place(
+            scene,
+            &hand,
+            "block",
+            Some("table"),
+            &[target],
+            lifted,
+            LOWER,
+            UPPER,
+            inverse(&model),
+            PlaceOptions { planner, ..PlaceOptions::default() },
+        )
+        .unwrap_or_else(|e| panic!("{e}"))
+    };
+    let q_pre = *place(&carrying).to_preplace.last().unwrap();
+    let (plated, finger, moved) = plate_across(&carrying, lifted, q_pre);
+    let plan = place(&plated);
+    assert_eq!(plan.to_preplace.last(), Some(&q_pre));
+    assert!(plan.to_preplace.len() > 2);
+    for pair in plan.to_preplace.windows(2) {
+        assert!(plated.motion_is_free(&pair[0], &pair[1]), "{pair:?}");
+        // An independent look, not resting on the scene's distances:
+        // configurations 2 mrad apart, at which a finger moves about 2 mm,
+        // less than its own thickness.
+        assert!(
+            roplat_trajectory::segment_is_valid(&pair[0], &pair[1], 0.002, |q| plated.is_free(q)),
+            "{pair:?}"
+        );
+    }
+    println!(
+        "FIX14B grasp thin plate, place: finger {finger} moves {moved:.3} m between two checks; the free path has {} waypoints",
+        plan.to_preplace.len()
+    );
+}

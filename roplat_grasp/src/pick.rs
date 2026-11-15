@@ -4,7 +4,7 @@ use nalgebra as na;
 use roplat_scene::{CollisionCheck, EndEffector, PlanningScene};
 use roplat_trajectory::{
     CartesianPathOptions, CartesianStop, PlanError, PlannerOptions, plan_cartesian_motion,
-    plan_cartesian_path, plan_joint_motion, plan_joint_path,
+    plan_cartesian_path, plan_joint_motion,
 };
 
 use crate::Grasp;
@@ -17,7 +17,8 @@ pub struct PickOptions {
     /// The tool's straight motion after the fingers close, in the world
     /// (m); usually up.
     pub lift: na::Vector3<f64>,
-    /// Search for the free path to the pre-grasp pose.
+    /// Search for the free path to the pre-grasp pose. Its segments are
+    /// checked as whole motions, so `resolution` is not used.
     pub planner: PlannerOptions,
     /// Steps of the straight approach and lift.
     pub cartesian: CartesianPathOptions,
@@ -112,6 +113,15 @@ impl std::error::Error for PickError {}
 ///   chain to the link.
 /// - Every configuration stays within `lower..=upper`.
 ///
+/// The free path to the pre-grasp pose is checked as whole motions
+/// ([`PlanningScene::motion_is_free`]), so it steps over no obstacle,
+/// however thin: a check of configurations `options.planner.resolution`
+/// apart would let a link pass a plate thinner than what it sweeps between
+/// two of them. The whole check is as sound as the scene's distances,
+/// which for two boxes can be too large (see the crate's README). The straight approach and lift are checked at their
+/// Cartesian steps (`options.cartesian`), a tool translation of at most
+/// `max_step` apart; [`plan_pick_motion`] checks them whole as well.
+///
 /// The scene is not changed: attaching the object for the lift happens on
 /// a copy. After executing the plan, attach the object in the caller's own
 /// scene with [`PlanningScene::attach`] at
@@ -147,12 +157,10 @@ pub fn plan_pick<const N: usize>(
     )
 }
 
-/// As [`plan_pick`], with every segment checked whole by
-/// [`PlanningScene::motion_is_free`] instead of sampled every
-/// `resolution` radians: the free path, the approach and the lift (see
-/// `roplat_scene::motion`). A thin obstacle between two samples, such as a
-/// shelf edge, is not stepped over. The `resolution` of `options` is not
-/// used.
+/// As [`plan_pick`], with the straight approach and lift also checked
+/// whole by [`PlanningScene::motion_is_free`] instead of at their Cartesian
+/// steps (see `roplat_scene::motion`), as the free path always is. A thin
+/// obstacle between two steps, such as a shelf edge, is not stepped over.
 #[allow(
     clippy::too_many_arguments,
     reason = "the pick motion planner's inputs are independent: scene, hand, object, support, grasps, start, joint range, inverse kinematics and options; grouping them into a planning context is the later form (style ruling 10)"
@@ -184,10 +192,11 @@ pub fn plan_pick_motion<const N: usize>(
     )
 }
 
-/// How segments are checked.
+/// How the straight tool motions are checked; free paths are always
+/// checked as whole motions.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Check {
-    /// At samples `resolution` apart.
+    /// At their Cartesian steps.
     Sampled,
     /// As whole motions.
     Whole,
@@ -265,24 +274,14 @@ fn try_grasp<const N: usize>(
     if !inside(&q_pre) || !scene.is_free(&q_pre) {
         return Err(PickFailure::PregraspInvalid);
     }
-    let to_pregrasp = match check {
-        Check::Sampled => plan_joint_path(
-            start,
-            q_pre,
-            lower,
-            upper,
-            |q| scene.is_free(q),
-            options.planner,
-        ),
-        Check::Whole => plan_joint_motion(
-            start,
-            q_pre,
-            lower,
-            upper,
-            |a, b| scene.motion_is_free(a, b),
-            options.planner,
-        ),
-    }
+    let to_pregrasp = plan_joint_motion(
+        start,
+        q_pre,
+        lower,
+        upper,
+        |a, b| scene.motion_is_free(a, b),
+        options.planner,
+    )
     .map_err(PickFailure::Path)?;
 
     // 2. Straight in; the tool may touch the object.
