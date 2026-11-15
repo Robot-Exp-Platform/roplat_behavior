@@ -299,3 +299,58 @@ fn the_planner_goes_around_a_plate_it_would_sample_through() {
         );
     }
 }
+
+/// fix14b's planar arm with box links: two 0.6 m links 4 mm square,
+/// turning about z (as in `distance.rs`).
+const BOX_ARM: &str = r#"<robot name="planar">
+  <link name="base"/>
+  <joint name="j1" type="revolute"><parent link="base"/><child link="l1"/><axis xyz="0 0 1"/><limit lower="-3" upper="3" effort="1" velocity="1"/></joint>
+  <link name="l1"><collision><origin xyz="0.3 0 0"/><geometry><box size="0.6 0.004 0.004"/></geometry></collision></link>
+  <joint name="j2" type="revolute"><parent link="l1"/><child link="l2"/><origin xyz="0.6 0 0"/><axis xyz="0 0 1"/><limit lower="-2.5" upper="2.5" effort="1" velocity="1"/></joint>
+  <link name="l2"><collision><origin xyz="0.3 0 0"/><geometry><box size="0.6 0.004 0.004"/></geometry></collision></link>
+</robot>"#;
+
+/// The box arm and a box plate 2 mm thick across the outer link's sweep: y
+/// from 0.010 to 0.012, x from 1.05 to 1.15 m.
+fn box_arm_and_plate() -> PlanningScene<2> {
+    let model = RobotModel::from_urdf_str(BOX_ARM).unwrap();
+    let mut scene = PlanningScene::new(model, ["j1", "j2"], as_path).unwrap();
+    scene
+        .add_object("plate", &plate([0.1, 0.002, 0.05]), at(1.1, 0.011, 0.0))
+        .unwrap();
+    scene
+}
+
+/// Box against box, the pair parry 0.25 measures too far apart: straight
+/// and at 0.02 rad the outer link clears the plate, between them it passes
+/// through. With the overestimated distances the whole-motion check
+/// advanced past the plate and called both motions free.
+#[test]
+fn a_box_link_sweeping_through_a_thin_plate_is_found() {
+    let scene = box_arm_and_plate();
+    let (from, to) = ([0.0, 0.0], [0.02, 0.0]);
+    assert!(scene.is_free(&from) && scene.is_free(&to));
+    assert!(!scene.is_free(&[0.01, 0.0]), "the sweep crosses the plate");
+    let hit = scene
+        .motion_contact(&from, &to)
+        .expect("the motion through the plate is not free");
+    assert_eq!(
+        (hit.contact.first.as_str(), hit.contact.second.as_str()),
+        ("l2", "plate")
+    );
+    // The link's upper face, 2 mm above its axis, first meets the plate's
+    // lower edge at x = 1.15 m, y = 0.010 m, where
+    // 0.010 cos θ - 1.15 sin θ = 0.002.
+    let (a, b, c) = (0.010_f64, 1.15_f64, 0.002_f64);
+    let touch = (c / a.hypot(b)).acos() - b.atan2(a);
+    let reported = hit.fraction * to[0];
+    assert!(
+        reported <= touch && touch - reported < MOTION_TOLERANCE / 1.1,
+        "touching at {touch} rad, reported at {reported} rad"
+    );
+    agrees_with_sampling(&scene, &from, &to);
+    // The whole swing from -0.5 to 0.5 rad, whose checks 0.05 rad apart
+    // all fall clear of the plate.
+    assert!(!scene.motion_is_free(&[-0.5, 0.0], &[0.5, 0.0]));
+    assert!(scene.motion_is_free(&[0.02, 0.0], &[0.5, 0.0]));
+}
