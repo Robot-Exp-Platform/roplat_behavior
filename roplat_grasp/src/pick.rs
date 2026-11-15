@@ -118,7 +118,8 @@ impl std::error::Error for PickError {}
 /// however thin: a check of configurations `options.planner.resolution`
 /// apart would let a link pass a plate thinner than what it sweeps between
 /// two of them. The whole check is as sound as the scene's distances,
-/// which for two boxes can be too large (see the crate's README). The straight approach and lift are checked at their
+/// which are never larger than the truth but by rounding. The straight
+/// approach and lift are checked at their
 /// Cartesian steps (`options.cartesian`), a tool translation of at most
 /// `max_step` apart; [`plan_pick_motion`] checks them whole as well.
 ///
