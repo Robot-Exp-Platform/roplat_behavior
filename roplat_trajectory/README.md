@@ -10,7 +10,7 @@ Part of the [roplat_behavior workspace](../README.md). 0.9 is not on crates.io y
 
 - Joint and Cartesian interpolation: linear, trapezoid, S-curve and fourth-order (`path_generate`).
 - COPP time scaling on limits as data: `JointLimits`, `CartesianLimits`, `PathBounds` (`time_scaling`).
-- Collision-free joint-space paths (`path_planning`): `plan_joint_path` finds waypoints by RRT-Connect, with a collision check the caller supplies.
+- Collision-free joint-space paths (`path_planning`): `plan_joint_path` finds waypoints by RRT-Connect, with a collision check the caller supplies. It checks configurations `resolution` apart; `resolution_for_travel` picks the resolution from the scene's scale, so that no point of the robot moves farther than a given travel (at most the thinnest obstacle) between two checks. The default 0.02 rad comes from no scene: it lets an arm with two 0.6 m links step over a 2 cm wall.
 - Simplifying and smoothing them (`path_smoothing`): `simplify_path` and `smooth_path` drop the waypoints the path does not need and round its corners, checking every new segment, as OMPL's path simplifier does.
 - `plan_joint_motion`, `simplify_motion` and `smooth_motion` do the same with a check of each whole straight segment in place of samples.
 - Straight tip paths (`cartesian_path`): `plan_cartesian_path` moves the tip in straight lines through given poses, solving each step with the caller's seeded inverse kinematics. It stops before an unreachable pose, a joint jump or an invalid segment; `plan_cartesian_motion` checks each step whole.
