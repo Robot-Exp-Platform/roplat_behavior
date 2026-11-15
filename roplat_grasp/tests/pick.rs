@@ -392,3 +392,108 @@ fn places_the_picked_block_elsewhere_on_the_table() {
         assert!((back.translation.vector - Vector3::new(0.0, 0.0, -0.1)).norm() < 1e-4);
     }
 }
+
+/// A plate 1 mm thick across the path of a finger, between two of the
+/// configurations a check every `resolution` would look at, is not stepped
+/// over: the free path to the pre-grasp pose is checked as whole motions.
+///
+/// The resolution is coarse (0.1 rad), so that a finger certainly passes
+/// the plate between two checks: the defect does not depend on it, a check
+/// at 0.02 rad steps over plates thinner than a link's sweep in 0.02 rad.
+#[test]
+fn a_thin_plate_across_the_free_path_is_not_stepped_over() {
+    let at = Vector3::new(0.45, 0.1, 0.24);
+    let model = model();
+    let candidates = grasps(
+        &Geometry::Box { size: BLOCK },
+        &Isometry3::translation(at.x, at.y, at.z),
+        &GraspOptions::default(),
+    );
+    let coarse = PickOptions {
+        planner: roplat_trajectory::PlannerOptions {
+            resolution: 0.1,
+            ..roplat_trajectory::PlannerOptions::default()
+        },
+        ..PickOptions::default()
+    };
+    let pick = |scene: &PlanningScene<6>| {
+        plan_pick(
+            scene,
+            &hand(),
+            "block",
+            Some("table"),
+            &candidates,
+            start(),
+            LOWER,
+            UPPER,
+            inverse(&model),
+            coarse,
+        )
+        .unwrap_or_else(|e| panic!("{e}"))
+    };
+    // Where the free path goes without the plate.
+    let clear = scene(at);
+    let q_pre = *pick(&clear).to_pregrasp.last().unwrap();
+
+    // The straight motion from the start to there, at the configurations a
+    // sampled check looks at; the plate goes midway between the two at
+    // which the left finger moves farthest, across its motion.
+    let distance = (0..6)
+        .map(|i| (q_pre[i] - start()[i]).abs())
+        .fold(0.0, f64::max);
+    let steps = (distance / 0.1).ceil() as usize;
+    let at_sample = |k: usize| -> [f64; 6] {
+        std::array::from_fn(|i| start()[i] + (k as f64 / steps as f64) * (q_pre[i] - start()[i]))
+    };
+    let finger = |k: usize| clear.link_pose("left", &at_sample(k)).unwrap().translation.vector;
+    let k = (0..steps)
+        .max_by(|&a, &b| {
+            let d = |k: usize| (finger(k + 1) - finger(k)).norm();
+            d(a).total_cmp(&d(b))
+        })
+        .unwrap();
+    let (a, b) = (finger(k), finger(k + 1));
+    let normal = (b - a).normalize();
+    let rotation = nalgebra::UnitQuaternion::rotation_between(&Vector3::z(), &normal)
+        .unwrap_or_else(nalgebra::UnitQuaternion::identity);
+    let mut plated = clear.clone();
+    plated
+        .add_object(
+            "plate",
+            &Geometry::Box { size: [0.015, 0.015, 0.001] },
+            Isometry3::from_parts(((a + b) / 2.0).into(), rotation),
+        )
+        .unwrap();
+
+    // The control: every configuration the sampled check looks at is clear
+    // of the plate, and the straight motion is not: a planner checking
+    // those configurations takes it.
+    for j in 1..=steps {
+        assert!(plated.is_free(&at_sample(j)), "sample {j} touches the plate");
+    }
+    assert!(!plated.motion_is_free(&start(), &q_pre));
+    let sampled = roplat_trajectory::plan_joint_path(
+        start(),
+        q_pre,
+        LOWER,
+        UPPER,
+        |q| plated.is_free(q),
+        coarse.planner,
+    )
+    .unwrap();
+    assert_eq!(sampled, vec![start(), q_pre]);
+
+    // The pick goes around the plate.
+    let plan = pick(&plated);
+    assert_eq!(plan.to_pregrasp.last(), Some(&q_pre));
+    assert!(plan.to_pregrasp.len() > 2);
+    for pair in plan.to_pregrasp.windows(2) {
+        assert!(plated.motion_is_free(&pair[0], &pair[1]), "{pair:?}");
+    }
+    println!(
+        "FIX14B grasp thin plate: finger moves {:.3} m between samples {k} and {}; the free path has {} waypoints",
+        (b - a).norm(),
+        k + 1,
+        plan.to_pregrasp.len()
+    );
+}

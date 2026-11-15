@@ -5,7 +5,7 @@ use nalgebra as na;
 use roplat_scene::{CollisionCheck, EndEffector, PlanningScene};
 use roplat_trajectory::{
     CartesianPathOptions, CartesianStop, PlanError, PlannerOptions, plan_cartesian_motion,
-    plan_cartesian_path, plan_joint_motion, plan_joint_path,
+    plan_cartesian_path, plan_joint_motion,
 };
 
 use crate::pick::Check;
@@ -19,7 +19,8 @@ pub struct PlaceOptions {
     /// How far the tool backs off along its approach axis after the
     /// fingers open (m).
     pub retreat: f64,
-    /// Search for the free path to above the placement.
+    /// Search for the free path to above the placement. Its segments are
+    /// checked as whole motions, so `resolution` is not used.
     pub planner: PlannerOptions,
     /// Steps of the straight descent and retreat.
     pub cartesian: CartesianPathOptions,
@@ -118,6 +119,10 @@ impl std::error::Error for PlaceError {}
 ///   therefore not refused, so give placements resting on it.
 /// - `inverse` and `lower..=upper` as for [`plan_pick`](crate::plan_pick).
 ///
+/// The path to above the placement is checked as whole motions, carrying
+/// the object, and the straight descent and retreat at their Cartesian
+/// steps, as [`plan_pick`](crate::plan_pick) does.
+///
 /// The scene is not changed: releasing the object for the retreat happens
 /// on a copy. After executing the plan, detach the object in the caller's
 /// own scene with [`PlanningScene::detach`] at
@@ -153,8 +158,8 @@ pub fn plan_place<const N: usize>(
     )
 }
 
-/// As [`plan_place`], with every segment checked whole by
-/// [`PlanningScene::motion_is_free`], as
+/// As [`plan_place`], with the straight descent and retreat also checked
+/// whole by [`PlanningScene::motion_is_free`], as
 /// [`plan_pick_motion`](crate::plan_pick_motion) does for the pick.
 #[allow(
     clippy::too_many_arguments,
@@ -275,24 +280,14 @@ fn try_placement<const N: usize>(
     if !inside(&q_pre) || !scene.is_free(&q_pre) {
         return Err(PlaceFailure::PreplaceInvalid);
     }
-    let to_preplace = match check {
-        Check::Sampled => plan_joint_path(
-            start,
-            q_pre,
-            lower,
-            upper,
-            |q| scene.is_free(q),
-            options.planner,
-        ),
-        Check::Whole => plan_joint_motion(
-            start,
-            q_pre,
-            lower,
-            upper,
-            |a, b| scene.motion_is_free(a, b),
-            options.planner,
-        ),
-    }
+    let to_preplace = plan_joint_motion(
+        start,
+        q_pre,
+        lower,
+        upper,
+        |a, b| scene.motion_is_free(a, b),
+        options.planner,
+    )
     .map_err(PlaceFailure::Path)?;
 
     let forward = |scene: &PlanningScene<N>, q: &[f64; N]| {
