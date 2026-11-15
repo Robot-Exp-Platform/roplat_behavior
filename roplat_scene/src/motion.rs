@@ -27,13 +27,16 @@
 //! advance where a motion grazes an obstacle.
 //!
 //! The certificate is only as good as the distances: an advance by a
-//! distance measured too large by `e` can carry a pair up to `e` into its
-//! padding between two measurements. Pairs with a ball are measured in
-//! closed form, the rest by GJK, up to 1.2e-7 m too far between polyhedra
-//! and 3.3e-5 m against a capsule or a cylinder in the tests, a
-//! third of [`MOTION_TOLERANCE`]: a motion may graze that deep, and cannot
-//! pass through anything thicker. parry 0.25's own routine for two boxes,
-//! which can overestimate by centimetres, is not used.
+//! distance measured too large by `e` could carry a pair up to `e` into
+//! its padding between two measurements. The scene's distances are lower
+//! bounds, never too large but by rounding (balls and capsules measured by
+//! their centres and segments, every convex pair by the support gap GJK
+//! finds; see `src/distance.rs`), so no motion is certified that enters a
+//! padding. A distance may come out smaller than the truth, by 1e-10 m when
+//! GJK converges; a pair then counts as touching a little before its
+//! clearance falls to [`MOTION_TOLERANCE`]. parry 0.25's own routine for two
+//! boxes, which can overestimate by centimetres, and its GJK, which stops
+//! up to 3e-5 m too far against a narrow capsule or cylinder, are not used.
 
 use nalgebra as na;
 use parry3d_f64::{bounding_volume::Aabb, query, shape::SharedShape};

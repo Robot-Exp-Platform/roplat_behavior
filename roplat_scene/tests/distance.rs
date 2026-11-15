@@ -1,15 +1,23 @@
-//! The distances the scene reports agree with independent measurements.
+//! The distances the scene reports agree with independent measurements,
+//! and are never larger than them by more than [`OVER`].
 //!
-//! parry3d-f64 0.25's own routine for two cuboids overestimates their
-//! distance (see `src/distance.rs`). Here every pair of shapes the scene
-//! builds, a link's against an object's, is measured through
-//! [`PlanningScene::clearance`] and compared with:
+//! parry3d-f64 0.25 overestimates some distances: two cuboids by its own
+//! routine for them, capsules and cylinders by a GJK that stops early (see
+//! `src/distance.rs`). Here every pair of shapes the scene builds, a link's
+//! against an object's, is measured through [`PlanningScene::clearance`]
+//! and compared with:
 //!
 //! - closed forms written in this file, sharing no code with parry, for
 //!   boxes, meshes (the hull of a box), spheres, capsules and sensed voxels;
 //! - for a cylinder, which has no closed form against most shapes, the
-//!   prisms of [`SIDES`] sides inscribed in it and circumscribed about it,
-//!   measured by parry: the cylinder's distance lies between theirs.
+//!   least distance from the segments its boundary is made of (along its
+//!   side, and from its axis to its rim on each cap) to the other shape,
+//!   by closed forms and by golden-section search over the segments'
+//!   angle (and, against another cylinder, along each segment, where the
+//!   distance is convex). Every value it takes is a distance between two
+//!   points of the shapes, so it is never below the truth; the prisms of
+//!   [`SIDES`] sides inscribed in the cylinder and circumscribed about it,
+//!   measured by parry, check that the search found the least.
 //!
 //! The same pairs measured by parry's default `query::distance` and by
 //! `query::contact` are printed beside them.
@@ -101,6 +109,7 @@ fn a_box_link_near_a_thin_plate_is_measured_as_it_is() {
 fn box_pairs_agree_with_gjk_hulls_and_a_closed_form() {
     let mut random = Random(0x5ce1_e14b_0b0c_0001);
     let mut worst = [0.0_f64; 4];
+    let (mut over, mut under) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
     let (mut overlapping, mut near) = (0, 0);
     const PAIRS: usize = 2000;
     for k in 0..PAIRS {
@@ -118,18 +127,21 @@ fn box_pairs_agree_with_gjk_hulls_and_a_closed_form() {
         for (worst, value) in worst.iter_mut().zip([gjk, by_hull, exact, by_parry]) {
             *worst = worst.max((scene - value).abs());
         }
+        over = over.max(scene - exact);
+        under = under.max(exact - scene);
         overlapping += usize::from(exact == 0.0);
         near += usize::from(exact > 0.0 && exact < 1e-3);
         assert!(
-            (scene - exact).abs() <= tolerance(exact),
+            Truth::Exact(exact).admits(scene),
             "pair {k}: the scene {scene}, in closed form {exact}, GJK {gjk}, hulls {by_hull}"
         );
     }
     println!(
-        "SCENE14 {PAIRS} box pairs ({overlapping} overlapping, {near} nearer than 1 mm): \
-         the scene against GJK {:.1e} m at most, against hulls {:.1e}, against the closed form \
-         {:.1e}; parry's query::distance off by up to {:.4} m",
-        worst[0], worst[1], worst[2], worst[3]
+        "FIX15B {PAIRS} box pairs ({overlapping} overlapping, {near} nearer than 1 mm): \
+         the scene at most {over:.1e} m over and {under:.1e} m under the closed form; against \
+         parry's GJK {:.1e} m at most, against hulls {:.1e}; parry's query::distance off by up \
+         to {:.4} m",
+        worst[0], worst[1], worst[3]
     );
 }
 
@@ -147,14 +159,24 @@ fn every_pair_of_shapes_agrees_with_an_independent_measure() {
                 let b = Solid::random(object, &mut random);
                 let b = place(&a, b, k % 2 == 1, Turn::ALL[k / 2 % 3], &mut random);
                 let truth = truth(&a, &b);
+                if round(&a) || round(&b) {
+                    // The search over a cylinder's boundary found the least:
+                    // within the prisms' bounds.
+                    let (lower, upper) = rough(&a, &b).bounds();
+                    let (_, d) = truth.bounds();
+                    assert!(
+                        d <= upper + 1e-12 && d >= lower - 1e-4,
+                        "{link:?}-{object:?} {k}: searched {d}, prisms {lower}..{upper}"
+                    );
+                }
                 let scene = scene_distance(&a, &b);
                 let (by_parry, by_contact) = parry_default(&a, &b);
                 stats.add(truth, scene, by_parry, by_contact);
-                if !truth.admits(scene, round(&a) || round(&b)) {
+                if !truth.admits(scene) {
                     failures.push(format!("{link:?}-{object:?} {k}: {scene} for {truth:?}"));
                 }
             }
-            println!("SCENE14 survey {link:?}-{object:?}: {stats}");
+            println!("FIX15B survey {link:?}-{object:?}: {stats}");
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
@@ -189,26 +211,24 @@ impl Truth {
         (lower + upper) / 2.0
     }
 
-    /// Whether `d` is the distance, to within [`tolerance`], or, with a capsule
-    /// or a cylinder (`round`), to within [`ROUND`].
-    fn admits(self, d: f64, round: bool) -> bool {
+    /// Whether `d` is the distance: at most [`OVER`] above it and at most
+    /// [`UNDER`] below.
+    fn admits(self, d: f64) -> bool {
         let (lower, upper) = self.bounds();
-        let slack = |d: f64| if round { ROUND } else { tolerance(d) };
-        d >= lower - slack(lower) && d <= upper + slack(upper)
+        d <= upper + OVER && d >= lower - UNDER
     }
 }
 
-/// How far GJK may miss a distance between polyhedra: with faces nearly
-/// parallel it stops early too, up to 1.2e-7 m (2e-6 of the distance) in
-/// these tests. The closed forms are exact to rounding.
-fn tolerance(d: f64) -> f64 {
-    1e-7 + 1e-5 * d
-}
+/// How far (m) the scene's distance may exceed the truth: it is a lower
+/// bound, larger only by rounding, and the truths here are exact to
+/// rounding (a cylinder's is never below the truth). Before fix15b the
+/// scene took GJK's points, up to 3.3e-5 m too far against a capsule or a
+/// cylinder.
+const OVER: f64 = 1e-9;
 
-/// How far GJK may miss a distance to a capsule or a cylinder (m): its
-/// support points on a curved surface converge slowly, and it stops early
-/// with the points it has. Half of `MOTION_TOLERANCE`, which absorbs it.
-const ROUND: f64 = 5e-5;
+/// How far (m) the scene's distance may fall short of the truth: its GJK
+/// stops within 1e-10 m of its bound.
+const UNDER: f64 = 1e-8;
 
 fn round(s: &Solid) -> bool {
     matches!(s.kind, Kind::Capsule | Kind::Cylinder)
@@ -600,7 +620,9 @@ fn place(a: &Solid, mut b: Solid, tangent: bool, turn: Turn, random: &mut Random
         for _ in 0..50 {
             let middle = (inside + outside) / 2.0;
             b.pose = at(middle);
-            if truth(a, &b).middle() > 0.0 {
+            // Bounds are enough to place; the search over a cylinder's
+            // boundary would take fifty times as long.
+            if rough(a, &b).middle() > 0.0 {
                 outside = middle;
             } else {
                 inside = middle;
@@ -619,21 +641,33 @@ fn place(a: &Solid, mut b: Solid, tangent: bool, turn: Turn, random: &mut Random
     b
 }
 
-/// The distance between `a` and `b`, zero when they overlap.
+/// The distance between `a` and `b`, zero when they overlap; with a
+/// cylinder, by the search over its boundary.
 fn truth(a: &Solid, b: &Solid) -> Truth {
+    measure(a, b, true)
+}
+
+/// As [`truth`], but with a cylinder only the prisms' bounds.
+fn rough(a: &Solid, b: &Solid) -> Truth {
+    measure(a, b, false)
+}
+
+fn measure(a: &Solid, b: &Solid, search: bool) -> Truth {
     use Kind::*;
     let d = match (a.kind, b.kind) {
         (_, Voxels) => {
             return b
                 .cubes()
                 .iter()
-                .map(|cube| truth(a, cube))
+                .map(|cube| measure(a, cube, search))
                 .reduce(Truth::min)
                 .unwrap();
         }
-        (Voxels, _) => return truth(b, a),
+        (Voxels, _) => return measure(b, a, search),
         (Cylinder, Sphere) => point_cylinder(&b.centre(), a) - b.half.x,
-        (Sphere, Cylinder) => return truth(b, a),
+        (Sphere, Cylinder) => return measure(b, a, search),
+        (Cylinder, _) if search => cylinder_distance(a, b),
+        (_, Cylinder) if search => cylinder_distance(b, a),
         (Cylinder, _) | (_, Cylinder) => return prism_bounds(a, b),
         (Box | Mesh, Box | Mesh) => box_box(a, b),
         (Box | Mesh, Sphere) => point_box(&b.centre(), a) - b.half.x,
@@ -641,19 +675,100 @@ fn truth(a: &Solid, b: &Solid) -> Truth {
             let (p, q) = b.axis();
             segment_box(&p, &q, a) - b.half.x
         }
-        (Sphere | Capsule, Box | Mesh) => return truth(b, a),
+        (Sphere | Capsule, Box | Mesh) => return measure(b, a, search),
         (Sphere, Sphere) => (a.centre() - b.centre()).norm() - a.half.x - b.half.x,
         (Sphere, Capsule) => {
             let (p, q) = b.axis();
             segment_segment(&a.centre(), &a.centre(), &p, &q) - a.half.x - b.half.x
         }
-        (Capsule, Sphere) => return truth(b, a),
+        (Capsule, Sphere) => return measure(b, a, search),
         (Capsule, Capsule) => {
             let ((p1, q1), (p2, q2)) = (a.axis(), b.axis());
             segment_segment(&p1, &q1, &p2, &q2) - a.half.x - b.half.x
         }
     };
     Truth::Exact(d.max(0.0))
+}
+
+/// Angles at which the boundary's segments are sampled before the
+/// golden-section search narrows down on the best.
+const ANGLES: usize = 64;
+
+/// The distance between cylinder `c` and `x` (a box, a mesh, a capsule or
+/// a cylinder), zero when they overlap. When they do not, `c`'s nearest
+/// point lies on its boundary: on a segment of its side, `(r cos φ, r sin
+/// φ, z)` for `|z| ≤ h`, or on a radius of one of its caps, `(ρ cos φ, ρ
+/// sin φ, ±h)` for `0 ≤ ρ ≤ r`. For each of the three families the least
+/// distance from a segment to `x` is searched over `φ`: [`ANGLES`] samples,
+/// then golden-section search about the best. When `x` lies inside `c`, no
+/// boundary segment meets it, but its centre is inside.
+fn cylinder_distance(c: &Solid, x: &Solid) -> f64 {
+    if point_cylinder(&x.centre(), c) == 0.0 {
+        return 0.0;
+    }
+    let (r, h) = (c.half.x, c.half.z);
+    let at = |rho: f64, phi: f64, z: f64| c.pose * Point3::new(rho * phi.cos(), rho * phi.sin(), z);
+    let families: [&dyn Fn(f64) -> (Point3<f64>, Point3<f64>); 3] = [
+        &|phi: f64| (at(r, phi, -h), at(r, phi, h)),
+        &|phi: f64| (at(0.0, phi, h), at(r, phi, h)),
+        &|phi: f64| (at(0.0, phi, -h), at(r, phi, -h)),
+    ];
+    families
+        .iter()
+        .map(|segment| {
+            let f = |phi: f64| {
+                let (p, q) = segment(phi);
+                segment_to(&p, &q, x)
+            };
+            let step = TAU / ANGLES as f64;
+            let best = (0..ANGLES)
+                .min_by(|&i, &j| f(i as f64 * step).total_cmp(&f(j as f64 * step)))
+                .unwrap() as f64;
+            golden((best - 1.0) * step, (best + 1.0) * step, f)
+        })
+        .fold(f64::INFINITY, f64::min)
+        .max(0.0)
+}
+
+/// Distance from the segment `p q` to `x`, a box, a mesh, a capsule or a
+/// cylinder: closed forms, or against a cylinder a golden-section search
+/// along the segment, where the distance to a convex set is convex.
+fn segment_to(p: &Point3<f64>, q: &Point3<f64>, x: &Solid) -> f64 {
+    match x.kind {
+        Kind::Box | Kind::Mesh => segment_box(p, q, x),
+        Kind::Capsule => {
+            let (r, s) = x.axis();
+            segment_segment(p, q, &r, &s) - x.half.x
+        }
+        Kind::Cylinder => golden(0.0, 1.0, |t| point_cylinder(&(*p + (q - p) * t), x)),
+        Kind::Sphere | Kind::Voxels => unreachable!("measured otherwise"),
+    }
+}
+
+/// The least value of `f` on `[low, high]` found by golden-section search,
+/// exact for a function that falls and then rises there. Every value it
+/// returns is a value of `f`.
+fn golden(mut low: f64, mut high: f64, f: impl Fn(f64) -> f64) -> f64 {
+    let ratio = (5f64.sqrt() - 1.0) / 2.0;
+    let (mut x1, mut x2) = (high - ratio * (high - low), low + ratio * (high - low));
+    let (mut f1, mut f2) = (f(x1), f(x2));
+    let mut best = f(low).min(f(high)).min(f1).min(f2);
+    for _ in 0..80 {
+        if f1 <= f2 {
+            high = x2;
+            (x2, f2) = (x1, f1);
+            x1 = high - ratio * (high - low);
+            f1 = f(x1);
+            best = best.min(f1);
+        } else {
+            low = x1;
+            (x1, f1) = (x2, f2);
+            x2 = low + ratio * (high - low);
+            f2 = f(x2);
+            best = best.min(f2);
+        }
+    }
+    best
 }
 
 /// Bounds on a distance with a cylinder: between the circumscribed prisms'

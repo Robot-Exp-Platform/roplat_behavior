@@ -28,10 +28,13 @@
 //! [`occupancy::OccupancyMap`] keeps sensed obstacles current across scans,
 //! clearing the voxels rays pass through, and
 //! [`PlanningScene::set_occupancy`] puts it into the scene.
-//! Distances come from [parry3d-f64](https://parry.rs), with one exception:
-//! parry 0.25's routine for two boxes overestimates their distance, so the
-//! scene measures box against box by GJK, as parry does every other pair of
-//! convex shapes but a ball (which it measures in closed form).
+//! Shapes and contacts come from [parry3d-f64](https://parry.rs); distances
+//! between convex parts are measured by the scene itself, as lower bounds
+//! that only rounding can make too large: parry 0.25 overestimates the
+//! distance of two boxes by its routine for them, and of curved shapes by
+//! a GJK that stops early. A ball is its centre and a capsule its segment,
+//! dilated by the radius; the cores are measured by GJK, whose support gap
+//! is the distance reported.
 //!
 //! The planners sample a motion between two configurations every few
 //! hundredths of a radian, which can step over a thin obstacle.
