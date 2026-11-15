@@ -638,11 +638,14 @@ impl<const N: usize> PlanningScene<N> {
                     for (pb, sb) in &b.parts {
                         let mut distance = distance::distance(pa, sa.as_ref(), pb, sb.as_ref());
                         if distance <= 0.0 {
-                            // Overlapping: the depth, from the contact.
+                            // Overlapping: the depth, from the contact. parry's
+                            // contact can call a pair the scene measured as
+                            // overlapping a few micrometres apart; it stays
+                            // touching.
                             distance = query::contact(pa, sa.as_ref(), pb, sb.as_ref(), 0.0)
                                 .ok()
                                 .flatten()
-                                .map_or(0.0, |contact| contact.dist);
+                                .map_or(0.0, |contact| contact.dist.min(0.0));
                         }
                         if nearest
                             .as_ref()
