@@ -173,7 +173,10 @@ fn every_pair_of_shapes_agrees_with_an_independent_measure() {
                 let (by_parry, by_contact) = parry_default(&a, &b);
                 stats.add(truth, scene, by_parry, by_contact);
                 if !truth.admits(scene) {
-                    failures.push(format!("{link:?}-{object:?} {k}: {scene} for {truth:?}"));
+                    failures.push(format!(
+                        "{link:?}-{object:?} {k}: {scene} for {truth:?}; a {:?} {:?}, b {:?} {:?}",
+                        a.pose, a.half, b.pose, b.half
+                    ));
                 }
             }
             println!("FIX15B survey {link:?}-{object:?}: {stats}");
@@ -708,16 +711,16 @@ fn cylinder_distance(c: &Solid, x: &Solid) -> f64 {
     }
     let (r, h) = (c.half.x, c.half.z);
     let at = |rho: f64, phi: f64, z: f64| c.pose * Point3::new(rho * phi.cos(), rho * phi.sin(), z);
-    let families: [&dyn Fn(f64) -> (Point3<f64>, Point3<f64>); 3] = [
-        &|phi: f64| (at(r, phi, -h), at(r, phi, h)),
-        &|phi: f64| (at(0.0, phi, h), at(r, phi, h)),
-        &|phi: f64| (at(0.0, phi, -h), at(r, phi, -h)),
-    ];
-    families
-        .iter()
-        .map(|segment| {
+    // The side's segment at φ, and the radius at φ of the top and bottom.
+    let segment = |family: usize, phi: f64| match family {
+        0 => (at(r, phi, -h), at(r, phi, h)),
+        1 => (at(0.0, phi, h), at(r, phi, h)),
+        _ => (at(0.0, phi, -h), at(r, phi, -h)),
+    };
+    (0..3)
+        .map(|family| {
             let f = |phi: f64| {
-                let (p, q) = segment(phi);
+                let (p, q) = segment(family, phi);
                 segment_to(&p, &q, x)
             };
             let step = TAU / ANGLES as f64;

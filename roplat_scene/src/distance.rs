@@ -29,7 +29,9 @@
 //!   lower bound of the distance however early GJK stops. That bound is the
 //!   distance reported. The simplex keeps every support point that can
 //!   still shorten the distance, and GJK stops when the bound is within
-//!   [`GAP`] of the simplex's distance, or after [`ITERATIONS`].
+//!   [`GAP`] of the simplex's distance, or after [`ITERATIONS`]; stopped
+//!   short of that, it also takes the gap along the direction parry's own
+//!   GJK ends with.
 //! - Compounds (sensed voxels, decomposed meshes) are searched part by part
 //!   through parry's bounding-volume tree with these distances; its pruning
 //!   by bounding boxes keeps the result a lower bound.
@@ -45,7 +47,7 @@ use parry3d_f64::{
         ClosestPoints, Contact, DefaultQueryDispatcher, NonlinearRigidMotion, QueryDispatcher,
         ShapeCastHit, ShapeCastOptions, Unsupported,
         details::{distance_composite_shape_shape, distance_shape_composite_shape},
-        gjk::ConstantOrigin,
+        gjk::{self, CSOPoint, ConstantOrigin, GJKResult, VoronoiSimplex},
     },
     shape::{Shape, SupportMap},
 };
@@ -219,6 +221,23 @@ fn separation(pos12: &na::Isometry3<f64>, g1: &dyn SupportMap, g2: &dyn SupportM
             break;
         }
         simplex.push(s);
+    }
+    if upper - lower > GAP {
+        // Stopped short (rounding in a thin simplex, or the iterations):
+        // parry's GJK may end on a better direction; the gap along it, and
+        // along the line between the points it ends with, bound the
+        // distance just the same.
+        let gap = |n: &na::Vector3<f64>| -n.dot(&support(n));
+        let mut simplex = VoronoiSimplex::new();
+        simplex.reset(CSOPoint::from_shapes(pos12, g1, g2, &start));
+        if let GJKResult::ClosestPoints(p1, p2, n) =
+            gjk::closest_points(pos12, g1, g2, f64::MAX, true, &mut simplex)
+        {
+            lower = lower.max(gap(&n));
+            if let Some(between) = na::Unit::try_new(p2 - p1, 0.0) {
+                lower = lower.max(gap(&between));
+            }
+        }
     }
     lower
 }
