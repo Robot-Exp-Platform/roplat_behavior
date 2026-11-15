@@ -17,3 +17,9 @@ categories = ["science::robotics"]
 [patch.crates-io]
 roplat = { path = "../roplat/roplat" }
 roplat_msgs = { path = "../roplat/roplat_msgs" }
+
+# parry's queries, hulls and convex decomposition are slow unoptimised
+# (V-HACD about 200 times), and roplat_scene's tests measure many pairs of shapes.
+# Only the dev profile; release builds are optimised anyway.
+[profile.dev.package.parry3d-f64]
+opt-level = 2
