@@ -10,7 +10,7 @@
 
 - 关节与笛卡尔插值：直线、梯形、S 曲线、四次曲线（`path_generate`）。
 - 以数据表达限值（`JointLimits`、`CartesianLimits`、`PathBounds`）的 COPP 时间缩放（`time_scaling`）。
-- 关节空间的无碰撞路径（`path_planning`）：`plan_joint_path` 用 RRT-Connect 求路径点，碰撞检查由调用方提供。
+- 关节空间的无碰撞路径（`path_planning`）：`plan_joint_path` 用 RRT-Connect 求路径点，碰撞检查由调用方提供。它每隔 `resolution` 检查一个位形；`resolution_for_travel` 按场景尺度取分辨率，使相邻两次检查之间机器人上任何一点的位移不超过给定值（不大于最薄的障碍物）。默认的 0.02 rad 不来自任何场景：两节 0.6 m 连杆的机械臂会因此跨过 2 cm 的墙。
 - 路径简化与平滑（`path_smoothing`）：`simplify_path` 与 `smooth_path` 去掉不需要的路径点并圆滑拐角，每段新路径都经过检查，与 OMPL 的路径简化器相同。
 - `plan_joint_motion`、`simplify_motion` 与 `smooth_motion` 做同样的事，但对每段直线运动整体检查，不再逐点采样。
 - 末端直线路径（`cartesian_path`）：`plan_cartesian_path` 让末端沿直线依次经过给定位姿，每步用调用方带种子的逆解求关节位形，在不可达、关节跳变或关节段无效之前停下；`plan_cartesian_motion` 对每一步整体检查。

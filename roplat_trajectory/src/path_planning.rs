@@ -9,9 +9,15 @@
 //! with [`plan_waypoints_traj_via_copp`](crate::plan_waypoints_traj_via_copp).
 //!
 //! Sampling can step over an obstacle thinner than what a link sweeps
-//! between two samples. [`plan_joint_motion`] runs the same search with a
-//! check that answers for a whole straight motion instead, such as
-//! `PlanningScene::motion_is_free` in `roplat_scene`, which leaves no
+//! between two samples. A step of `resolution` in every joint moves a point
+//! of the robot by up to `resolution` times the sum of the joints' reaches
+//! (the farthest that point lies from each moving joint's axis): 0.02 rad
+//! moves the tip of a planar arm with two 0.6 m links by up to 3.6 cm,
+//! past a 2 cm wall. [`resolution_for_travel`] picks the resolution from the scene's
+//! scale instead: the travel allowed between two checks, no more than the
+//! thinnest obstacle, and the robot's reaches. [`plan_joint_motion`] runs
+//! the same search with a check that answers for a whole straight motion,
+//! such as `PlanningScene::motion_is_free` in `roplat_scene`, which leaves no
 //! resolution to choose.
 
 /// Search settings for [`plan_joint_path`].
@@ -19,7 +25,9 @@
 pub struct PlannerOptions {
     /// Longest tree edge, as the largest per-joint step (rad).
     pub max_step: f64,
-    /// Largest per-joint gap between configurations checked along an edge.
+    /// Largest per-joint gap between configurations checked along an edge
+    /// (rad, or m for a prismatic joint). The default, 0.02, comes from no
+    /// scene; choose it with [`resolution_for_travel`].
     pub resolution: f64,
     /// Tree extensions before giving up.
     pub max_iterations: usize,
@@ -64,6 +72,13 @@ impl std::error::Error for PlanError {}
 
 /// Waypoints from `start` to `goal`, both included, with every straight
 /// segment between consecutive waypoints valid at `options.resolution`.
+///
+/// Only the sampled configurations are checked. With the resolution from
+/// [`resolution_for_travel`], no point of the robot moves farther than the
+/// travel between two of them: an obstacle thicker than the travel cannot
+/// be crossed, and a contact between two samples goes no deeper than half
+/// the travel. Nothing is guaranteed between samples at any other
+/// resolution.
 pub fn plan_joint_path<const N: usize>(
     start: [f64; N],
     goal: [f64; N],
@@ -180,6 +195,35 @@ pub fn segment_is_valid<const N: usize>(
         let t = k as f64 / steps as f64;
         is_valid(&std::array::from_fn(|i| a[i] + t * (b[i] - a[i])))
     })
+}
+
+/// The [`resolution`](PlannerOptions::resolution) at which no point of a
+/// robot moves farther than `travel` (m) between two configurations checked
+/// along a segment, so that no obstacle thicker than `travel` is stepped
+/// over.
+///
+/// `reach[i]` bounds how far any point that joint `i` moves can lie from
+/// that joint's axis (m), or is 1 for a prismatic joint. Turning joint `i`
+/// by `dq` moves such a point by at most `reach[i] · |dq|`, and the joints'
+/// motions add, so a step of `resolution` in every joint moves no point
+/// farther than `resolution · Σ reach`.
+///
+/// # Panics
+///
+/// If `travel` is not positive and finite, or a reach is negative or not
+/// finite, or the reaches add to zero.
+pub fn resolution_for_travel<const N: usize>(travel: f64, reach: &[f64; N]) -> f64 {
+    assert!(
+        travel.is_finite() && travel > 0.0,
+        "travel must be positive and finite"
+    );
+    assert!(
+        reach.iter().all(|r| r.is_finite() && *r >= 0.0),
+        "reaches must be finite and nonnegative"
+    );
+    let total: f64 = reach.iter().sum();
+    assert!(total > 0.0, "the reaches must not add to zero");
+    travel / total
 }
 
 /// Largest per-joint difference.
