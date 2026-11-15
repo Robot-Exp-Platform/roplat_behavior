@@ -439,7 +439,13 @@ fn plate_for(
     let at_sample = |k: usize| -> [f64; 6] {
         std::array::from_fn(|i| from[i] + (k as f64 / steps as f64) * (to[i] - from[i]))
     };
-    let point = |k: usize| scene.link_pose(link, &at_sample(k)).unwrap().translation.vector;
+    let point = |k: usize| {
+        scene
+            .link_pose(link, &at_sample(k))
+            .unwrap()
+            .translation
+            .vector
+    };
     let k = (0..steps)
         .max_by(|&a, &b| {
             let d = |k: usize| (point(k + 1) - point(k)).norm();
