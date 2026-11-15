@@ -14,6 +14,7 @@ The scene:
 - Through `CollisionCheck` it answers the validity check `plan_joint_path` in [`roplat_trajectory`](../roplat_trajectory/README.md) asks of its caller (`scene.is_free(q)`); `contacts` lists the contacts and `clearance` gives the nearest pair.
 - `set_pair_padding` lets a pair keep its own clearance in place of the scene's padding, in configuration and whole-motion checks alike.
 - `motion_contact` and `motion_is_free` check a straight joint motion as a whole by conservative advancement, so a thin obstacle between two samples is not stepped over.
+- `reach` gives, for each joint of the group, how far any point it moves can lie from its axis (1 for a prismatic joint), over the bounds the planner searches: what `resolution_for_travel` in `roplat_trajectory` needs to pick a sampling resolution at which no point moves farther than a given travel between two checks.
 - Concave objects such as bins and shelves keep their hollows: `add_concave_object` (a mesh file) and `add_trimesh` (triangles built in code) split them into convex parts by V-HACD instead of one hull. `decompose_link` splits a concave link's meshes the same way.
 - Named configurations (`NamedPoses`) and tool placement (`EndEffector`), the parts of an SRDF that planning code needs, built in code.
 
@@ -30,7 +31,7 @@ For a viewer, `meshes` gives every link and object as world-frame triangles (RVi
 
 URDF boxes, spheres, cylinders and capsules keep their shape. A mesh (OBJ or STL) becomes the convex hull of its vertices, which contains the mesh: the hull may report a contact the mesh would not, never the reverse. A hull fills a concave object's hollows, so nothing can reach into a bin or a shelf unless the object is split into convex parts as above.
 
-Collision geometry is computed by `parry3d-f64` (0.25, the last release on nalgebra); there is no native dependency.
+Collision geometry is computed by `parry3d-f64` (0.25, the last release on nalgebra); there is no native dependency. One of its routines is not used: parry 0.25 measures two boxes with a routine made for contacts, which can report several times the true distance when faces are nearly parallel (2.3 cm for a box link 1.1 mm from a thin plate), and a whole-motion check that advances by such a distance can step past a contact. The scene measures box against box, also against sensed voxels, by GJK, as parry measures every other pair of convex shapes but a ball. Against a capsule or a cylinder GJK can stop before it converges, up to 0.033 mm too far in the tests, so a whole motion may graze an obstacle that deep but cannot pass through anything thicker.
 
 ## Related crates
 

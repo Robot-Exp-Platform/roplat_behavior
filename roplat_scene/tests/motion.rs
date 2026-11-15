@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use nalgebra::Isometry3;
 use roplat_description::{Geometry, RobotModel};
 use roplat_scene::{CollisionCheck, MOTION_TOLERANCE, PlanningScene};
-use roplat_trajectory::{PlannerOptions, plan_joint_motion, plan_joint_path, segment_is_valid};
+use roplat_trajectory::{
+    PlannerOptions, plan_joint_motion, plan_joint_path, resolution_for_travel, segment_is_valid,
+};
 
 /// A planar two-link arm 0.25 m up: 0.5 m upper arm, 0.4 m forearm, and a
 /// finger on a slide, 0.93 m from the shoulder when straight and retracted
@@ -297,5 +299,201 @@ fn the_planner_goes_around_a_plate_it_would_sample_through() {
             None,
             "{pair:?}"
         );
+    }
+}
+
+/// fix14b's planar arm with box links: two 0.6 m links 4 mm square,
+/// turning about z (as in `distance.rs`).
+const BOX_ARM: &str = r#"<robot name="planar">
+  <link name="base"/>
+  <joint name="j1" type="revolute"><parent link="base"/><child link="l1"/><axis xyz="0 0 1"/><limit lower="-3" upper="3" effort="1" velocity="1"/></joint>
+  <link name="l1"><collision><origin xyz="0.3 0 0"/><geometry><box size="0.6 0.004 0.004"/></geometry></collision></link>
+  <joint name="j2" type="revolute"><parent link="l1"/><child link="l2"/><origin xyz="0.6 0 0"/><axis xyz="0 0 1"/><limit lower="-2.5" upper="2.5" effort="1" velocity="1"/></joint>
+  <link name="l2"><collision><origin xyz="0.3 0 0"/><geometry><box size="0.6 0.004 0.004"/></geometry></collision></link>
+</robot>"#;
+
+/// The box arm and a box plate 2 mm thick across the outer link's sweep: y
+/// from 0.010 to 0.012, x from 1.05 to 1.15 m.
+fn box_arm_and_plate() -> PlanningScene<2> {
+    let model = RobotModel::from_urdf_str(BOX_ARM).unwrap();
+    let mut scene = PlanningScene::new(model, ["j1", "j2"], as_path).unwrap();
+    scene
+        .add_object("plate", &plate([0.1, 0.002, 0.05]), at(1.1, 0.011, 0.0))
+        .unwrap();
+    scene
+}
+
+/// Box against box, the pair parry 0.25 measures too far apart: straight
+/// and at 0.02 rad the outer link clears the plate, between them it passes
+/// through. With the overestimated distances the whole-motion check
+/// advanced past the plate and called both motions free.
+#[test]
+fn a_box_link_sweeping_through_a_thin_plate_is_found() {
+    let scene = box_arm_and_plate();
+    let (from, to) = ([0.0, 0.0], [0.02, 0.0]);
+    assert!(scene.is_free(&from) && scene.is_free(&to));
+    assert!(!scene.is_free(&[0.01, 0.0]), "the sweep crosses the plate");
+    let hit = scene
+        .motion_contact(&from, &to)
+        .expect("the motion through the plate is not free");
+    assert_eq!(
+        (hit.contact.first.as_str(), hit.contact.second.as_str()),
+        ("l2", "plate")
+    );
+    // The link's upper face, 2 mm above its axis, first meets the plate's
+    // lower edge at x = 1.15 m, y = 0.010 m, where
+    // 0.010 cos θ - 1.15 sin θ = 0.002.
+    let (a, b, c) = (0.010_f64, 1.15_f64, 0.002_f64);
+    let touch = (c / a.hypot(b)).acos() - b.atan2(a);
+    let reported = hit.fraction * to[0];
+    assert!(
+        reported <= touch && touch - reported < MOTION_TOLERANCE / 1.1,
+        "touching at {touch} rad, reported at {reported} rad"
+    );
+    agrees_with_sampling(&scene, &from, &to);
+    // The whole swing from -0.5 to 0.5 rad, whose checks 0.05 rad apart
+    // all fall clear of the plate.
+    assert!(!scene.motion_is_free(&[-0.5, 0.0], &[0.5, 0.0]));
+    assert!(scene.motion_is_free(&[0.02, 0.0], &[0.5, 0.0]));
+}
+
+fn assert_reach<const N: usize>(reach: [f64; N], expected: [f64; N]) {
+    assert!(
+        reach
+            .iter()
+            .zip(&expected)
+            .all(|(r, e)| (r - e).abs() < 1e-12),
+        "reach {reach:?}, not {expected:?}"
+    );
+}
+
+/// The toy arm's finger is the farthest from both joints: its 2 cm radius,
+/// the slide's 3 cm and the wrist's 0.4 m from the elbow, 0.45 m, and the
+/// elbow's 0.5 m more from the shoulder, 0.95 m.
+#[test]
+fn each_joint_reaches_as_far_as_what_it_moves() {
+    let mut scene = scene();
+    let (lower, upper) = ([-3.1; 2], [3.1; 2]);
+    assert_reach(scene.reach(&lower, &upper), [0.95, 0.45]);
+    // Slid out, the finger reaches 5 cm farther.
+    scene.set_joint("slide", 0.05).unwrap();
+    assert_reach(scene.reach(&lower, &upper), [1.0, 0.5]);
+    scene.set_joint("slide", 0.0).unwrap();
+    // A bar 0.2 m long held by the finger, from 0.93 to 1.13 m: its
+    // bounding sphere is 0.1 m out from the finger and 0.101 m round.
+    scene
+        .add_object("bar", &plate([0.2, 0.02, 0.02]), at(1.03, 0.0, 0.25))
+        .unwrap();
+    scene.attach("bar", "finger", &[], &[0.0, 0.0]).unwrap();
+    let bar = 0.1 + (0.1_f64.powi(2) + 2.0 * 0.01_f64.powi(2)).sqrt();
+    assert_reach(
+        scene.reach(&lower, &upper),
+        [bar + 0.03 + 0.4 + 0.5, bar + 0.03 + 0.4],
+    );
+    scene.detach("bar", &[0.0, 0.0]).unwrap();
+    assert_reach(scene.reach(&lower, &upper), [0.95, 0.45]);
+
+    // In the group, the slide counts 1, and its range the others' reach.
+    let slide: PlanningScene<3> =
+        PlanningScene::new(model(), ["shoulder", "elbow", "slide"], as_path).unwrap();
+    assert_reach(
+        slide.reach(&[-3.1, -3.1, 0.0], &[3.1, 3.1, 0.05]),
+        [1.0, 0.5, 1.0],
+    );
+}
+
+/// Between two configurations checked at the resolution
+/// `resolution_for_travel` gives for 1 cm and the scene's reach, no corner
+/// of the upper arm, point on the forearm's rims or pole of the finger
+/// moves 1 cm; turning both joints of the stretched arm one way, the
+/// finger's tip moves nearly that.
+#[test]
+fn the_reach_bounds_how_far_a_point_moves_between_checks() {
+    let scene = scene();
+    let (lower, upper) = ([-3.1; 2], [3.1; 2]);
+    let resolution = resolution_for_travel(0.01, &scene.reach(&lower, &upper));
+    let mut points: Vec<(&str, nalgebra::Point3<f64>)> = Vec::new();
+    for corner in 0..8 {
+        let sign = |k: usize| if (corner >> k) & 1 == 1 { 1.0 } else { -1.0 };
+        let p = nalgebra::Point3::new(0.25 + 0.25 * sign(0), 0.025 * sign(1), 0.025 * sign(2));
+        points.push(("upper", p));
+    }
+    for k in 0..16 {
+        let angle = std::f64::consts::TAU * k as f64 / 16.0;
+        for x in [0.0, 0.4] {
+            let p = nalgebra::Point3::new(x, 0.03 * angle.cos(), 0.03 * angle.sin());
+            points.push(("fore", p));
+        }
+    }
+    for axis in 0..3 {
+        for sign in [-0.02, 0.02] {
+            let mut p = nalgebra::Point3::origin();
+            p[axis] = sign;
+            points.push(("finger", p));
+        }
+    }
+    let positions = |q: &[f64; 2]| -> Vec<nalgebra::Point3<f64>> {
+        points
+            .iter()
+            .map(|(link, p)| scene.link_pose(link, q).unwrap() * p)
+            .collect()
+    };
+    // xorshift, so the segments are the same everywhere.
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    let mut unit = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let mut segments = vec![([0.0, 0.0], [0.5, 0.5])];
+    for _ in 0..40 {
+        let mut q = || [unit() * 6.2 - 3.1, unit() * 6.2 - 3.1];
+        segments.push((q(), q()));
+    }
+    let mut farthest = 0.0_f64;
+    for (a, b) in segments {
+        let longest = (0..2).map(|i| (b[i] - a[i]).abs()).fold(0.0, f64::max);
+        let steps = (longest / resolution).ceil().max(1.0) as usize;
+        let mut before = positions(&a);
+        for k in 1..=steps {
+            let after = positions(&lerp(&a, &b, k as f64 / steps as f64));
+            for (p, q) in before.iter().zip(&after) {
+                farthest = farthest.max((q - p).norm());
+            }
+            before = after;
+        }
+    }
+    assert!(farthest <= 0.01 + 1e-12, "a point moved {farthest} m");
+    assert!(farthest > 0.0099, "the bound is loose: {farthest} m");
+}
+
+/// With the resolution from the scene's reach, the sampled planner no
+/// longer steps over the 2 mm plate: no point moves more than 1 mm between
+/// checks, and a padding of 2 mm keeps the samples 1.5 mm clear of the
+/// plate between checks too, well above the whole-motion tolerance.
+#[test]
+fn the_reach_gives_the_sampled_planner_a_resolution_that_sees_the_plate() {
+    let scene = box_arm_and_plate();
+    let (start, goal) = ([-0.5, 0.0], [0.5, 0.0]);
+    let (lower, upper) = ([-3.0, -2.5], [3.0, 2.5]);
+    let reach = scene.reach(&lower, &upper);
+    // 0.6 m from each joint to its link's end, and the link's half
+    // diagonal past it.
+    let tip = 0.3 + (0.3_f64.powi(2) + 2.0 * 0.002_f64.powi(2)).sqrt();
+    assert_reach(reach, [tip + 0.6, tip]);
+    let default = PlannerOptions::default();
+    let stepped_over =
+        plan_joint_path(start, goal, lower, upper, |q| scene.is_free(q), default).unwrap();
+    assert_eq!(stepped_over, [start, goal]);
+
+    let options = PlannerOptions { resolution: resolution_for_travel(0.001, &reach), ..default };
+    let mut padded = scene.clone();
+    padded.set_padding(0.002).unwrap();
+    let path = plan_joint_path(start, goal, lower, upper, |q| padded.is_free(q), options).unwrap();
+    assert_eq!((path[0], *path.last().unwrap()), (start, goal));
+    assert!(path.len() > 2, "{path:?}");
+    for pair in path.windows(2) {
+        assert!(scene.motion_is_free(&pair[0], &pair[1]), "{pair:?}");
     }
 }

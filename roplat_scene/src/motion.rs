@@ -25,12 +25,21 @@
 //! steps shrink with the clearance. A pair whose clearance above the
 //! padding falls to [`MOTION_TOLERANCE`] counts as touching, which ends the
 //! advance where a motion grazes an obstacle.
+//!
+//! The certificate is only as good as the distances: an advance by a
+//! distance measured too large by `e` can carry a pair up to `e` into its
+//! padding between two measurements. Pairs with a ball are measured in
+//! closed form, the rest by GJK, up to 1.2e-7 m too far between polyhedra
+//! and 3.3e-5 m against a capsule or a cylinder in the tests, a
+//! third of [`MOTION_TOLERANCE`]: a motion may graze that deep, and cannot
+//! pass through anything thicker. parry 0.25's own routine for two boxes,
+//! which can overestimate by centimetres, is not used.
 
 use nalgebra as na;
 use parry3d_f64::{bounding_volume::Aabb, query, shape::SharedShape};
 use roplat_description::JointKind;
 
-use crate::{Body, CollisionCheck, Contact, Mount, PlanningScene};
+use crate::{Body, CollisionCheck, Contact, Mount, PlanningScene, distance};
 
 /// Clearance above the padding (m) at which a motion counts as touching.
 pub const MOTION_TOLERANCE: f64 = 1e-4;
@@ -125,11 +134,64 @@ impl<const N: usize> PlanningScene<N> {
             && self.motion_contact(from, to).is_none()
     }
 
+    /// For each joint of the group, how far any point the joint moves can
+    /// lie from its axis (m), or 1 for a prismatic joint, with the group
+    /// anywhere between `lower` and `upper`: the `reach` that
+    /// `resolution_for_travel` in `roplat_trajectory` takes to choose the
+    /// resolution of `plan_joint_path`, given the same bounds.
+    ///
+    /// A joint moves the links below it and the objects attached to them.
+    /// Each such body's reach from the joint is bounded along the chain
+    /// between them: its farthest point from its own link's origin (its
+    /// bounding sphere), plus the offset of each joint between, plus how
+    /// far each prismatic joint between can slide from zero (the larger of
+    /// `|lower|` and `|upper|` for one in the group, its
+    /// [fixed](Self::set_joint) position otherwise). A revolute joint's axis
+    /// passes through its child link's origin, so the bound holds for the
+    /// distance from the axis in every configuration; it may exceed the
+    /// farthest point, never fall short of it. It is the bound
+    /// [`motion_contact`](Self::motion_contact) advances by.
+    ///
+    /// The reach changes when an object is attached or detached, a link is
+    /// decomposed, or a prismatic joint outside the group is fixed; ask
+    /// again after. A joint that moves no geometry has a reach of 0.
+    pub fn reach(&self, lower: &[f64; N], upper: &[f64; N]) -> [f64; N] {
+        let mut reach = [0.0; N];
+        for chain in self.reaches(lower, upper) {
+            for (_, joint, body) in chain {
+                if let Some(k) = joint {
+                    reach[k] = f64::max(reach[k], body);
+                }
+            }
+        }
+        reach
+    }
+
     /// For each body, in the order of [`bodies`](Self::bodies), the joints
     /// from its link up to the root: each joint's child link, and how fast
     /// the joint moves the body's points along the motion (m per unit of
     /// `s`). Bodies in the world have none.
     fn chains(&self, from: &[f64; N], to: &[f64; N]) -> Vec<Vec<(usize, f64)>> {
+        self.reaches(from, to)
+            .into_iter()
+            .map(|chain| {
+                chain
+                    .into_iter()
+                    .map(|(link, joint, reach)| {
+                        (link, joint.map_or(0.0, |k| (to[k] - from[k]).abs() * reach))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// For each body, in the order of [`bodies`](Self::bodies), the joints
+    /// from its link up to the root: each joint's child link, its place in
+    /// the group if it has one, and the body's reach from the joint's axis
+    /// (m), or 1 for a prismatic joint, which moves the body as far as it
+    /// slides. The group's joints may be anywhere between `lower` and
+    /// `upper`. Bodies in the world have none.
+    fn reaches(&self, lower: &[f64; N], upper: &[f64; N]) -> Vec<Vec<(usize, Option<usize>, f64)>> {
         let mut into = vec![None; self.model.links.len()];
         for (j, joint) in self.model.joints.iter().enumerate() {
             into[joint.child] = Some(j);
@@ -141,7 +203,7 @@ impl<const N: usize> PlanningScene<N> {
                     .iter()
                     .map(|part| radius(&part.at, &part.shape))
                     .fold(0.0, f64::max);
-                chains.push(self.chain(&into, link, radius, from, to));
+                chains.push(self.chain(&into, link, radius, lower, upper));
             }
         }
         for object in &self.objects {
@@ -149,7 +211,7 @@ impl<const N: usize> PlanningScene<N> {
                 Mount::World(_) => Vec::new(),
                 Mount::Link { link, at, .. } => {
                     let radius = radius(&(at * object.part.at), &object.part.shape);
-                    self.chain(&into, *link, radius, from, to)
+                    self.chain(&into, *link, radius, lower, upper)
                 }
             });
         }
@@ -158,32 +220,34 @@ impl<const N: usize> PlanningScene<N> {
 
     /// The joints above `link` for a body reaching `radius` from the link's
     /// origin. A revolute joint's axis passes through its child's origin,
-    /// so it moves the body at most its step times the body's reach from
-    /// there; the reach then grows by the joint's offset from its parent.
+    /// so the body lies within its reach from there; the reach then grows
+    /// by the joint's offset from its parent, and by how far a prismatic
+    /// joint slides.
     fn chain(
         &self,
         into: &[Option<usize>],
         mut link: usize,
         radius: f64,
-        from: &[f64; N],
-        to: &[f64; N],
-    ) -> Vec<(usize, f64)> {
+        lower: &[f64; N],
+        upper: &[f64; N],
+    ) -> Vec<(usize, Option<usize>, f64)> {
         let mut reach = radius;
         let mut chain = Vec::new();
         while let Some(j) = into[link] {
             let joint = &self.model.joints[j];
             let group = self.group.iter().position(|&child| child == joint.child);
-            let step = group.map(|k| (to[k] - from[k]).abs());
-            let (rate, travel) = match joint.kind {
-                JointKind::Revolute | JointKind::Continuous => (step.unwrap_or(0.0) * reach, 0.0),
+            let (factor, travel) = match joint.kind {
+                JointKind::Revolute | JointKind::Continuous => (reach, 0.0),
                 // A unit axis: the body moves as far as the joint.
-                JointKind::Prismatic => match group {
-                    Some(k) => (step.unwrap_or(0.0), from[k].abs().max(to[k].abs())),
-                    None => (0.0, self.positions[joint.child].abs()),
-                },
+                JointKind::Prismatic => (
+                    1.0,
+                    group.map_or(self.positions[joint.child].abs(), |k| {
+                        lower[k].abs().max(upper[k].abs())
+                    }),
+                ),
                 _ => (0.0, 0.0),
             };
-            chain.push((link, rate));
+            chain.push((link, group, factor));
             reach += joint.origin.quat().translation.vector.norm() + travel;
             link = joint.parent;
         }
@@ -232,9 +296,7 @@ fn pair_distance(a: &Body<'_>, b: &Body<'_>, reach: f64) -> Option<f64> {
             if gap(ba, bb) > reach {
                 continue;
             }
-            // Every shape built here is convex or a compound of convex
-            // parts. Were a pair unsupported, it would count as touching.
-            let distance = query::distance(pa, sa.as_ref(), pb, sb.as_ref()).unwrap_or(0.0);
+            let distance = distance::distance(pa, sa.as_ref(), pb, sb.as_ref());
             nearest = Some(nearest.map_or(distance, |nearest| nearest.min(distance)));
         }
     }
