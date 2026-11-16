@@ -28,13 +28,16 @@
 //! [`occupancy::OccupancyMap`] keeps sensed obstacles current across scans,
 //! clearing the voxels rays pass through, and
 //! [`PlanningScene::set_occupancy`] puts it into the scene.
-//! Shapes and contacts come from [parry3d-f64](https://parry.rs); distances
-//! between convex parts are measured by the scene itself, as lower bounds
-//! that only rounding can make too large: parry 0.25 overestimates the
-//! distance of two boxes by its routine for them, and of curved shapes by
-//! a GJK that stops early. A ball is its centre and a capsule its segment,
-//! dilated by the radius; the cores are measured by GJK, whose support gap
-//! is the distance reported.
+//! Shapes come from [parry3d-f64](https://parry.rs); distances between
+//! convex parts are measured by the scene itself, as lower bounds that only
+//! rounding can make too large: parry 0.25 overestimates the distance of
+//! two boxes by its routine for them, and of curved shapes by a GJK that
+//! stops early. A ball is its centre and a capsule its segment, dilated by
+//! the radius; the cores are measured by GJK, whose support gap is the
+//! distance reported. Configuration checks compare these distances with the
+//! padding, so a configuration found free keeps its padding but for
+//! rounding; parry's contact query only gives the depth of parts that
+//! overlap.
 //!
 //! The planners sample a motion between two configurations every few
 //! hundredths of a radian, which can step over a thin obstacle.
@@ -106,12 +109,16 @@ pub enum SceneError {
 
 /// Two bodies, links or objects, that come within their padding: the
 /// scene's, or the pair's own (see [`PlanningScene::set_pair_padding`]).
+/// A pair is within its padding when the scene's distance, a lower bound
+/// (see the [crate](crate) docs), is at most the padding; with no padding,
+/// when the bodies touch or overlap.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Contact {
     pub first: String,
     pub second: String,
-    /// Signed distance (m) between their closest points, negative when they
-    /// overlap.
+    /// Signed distance (m) between their closest parts: the scene's lower
+    /// bound when they are apart, the depth of parry's contact (zero or
+    /// less) when they overlap.
     pub distance: f64,
 }
 
@@ -636,17 +643,8 @@ impl<const N: usize> PlanningScene<N> {
                 }
                 for (pa, sa) in &a.parts {
                     for (pb, sb) in &b.parts {
-                        let mut distance = distance::distance(pa, sa.as_ref(), pb, sb.as_ref());
-                        if distance <= 0.0 {
-                            // Overlapping: the depth, from the contact. parry's
-                            // contact can call a pair the scene measured as
-                            // overlapping a few micrometres apart; it stays
-                            // touching.
-                            distance = query::contact(pa, sa.as_ref(), pb, sb.as_ref(), 0.0)
-                                .ok()
-                                .flatten()
-                                .map_or(0.0, |contact| contact.dist.min(0.0));
-                        }
+                        let apart = distance::distance(pa, sa.as_ref(), pb, sb.as_ref());
+                        let distance = signed(pa, sa, pb, sb, apart);
                         if nearest
                             .as_ref()
                             .is_none_or(|nearest| distance < nearest.distance)
@@ -747,15 +745,15 @@ impl<const N: usize> PlanningScene<N> {
                         if !ba.intersects(bb) {
                             continue;
                         }
-                        let distance =
-                            match query::contact(pa, sa.as_ref(), pb, sb.as_ref(), padding) {
-                                Ok(Some(contact)) => contact.dist,
-                                Ok(None) => continue,
-                                // Every shape built here is convex. Were a
-                                // pair unsupported, it would count as touching
-                                // rather than free.
-                                Err(_) => 0.0,
-                            };
+                        // The scene's lower bound, too large only by
+                        // rounding: parts it measures beyond the padding are
+                        // beyond it. Were a pair unsupported, it would count
+                        // as touching rather than free.
+                        let apart = distance::within(pa, sa.as_ref(), pb, sb.as_ref(), padding);
+                        if apart > padding {
+                            continue;
+                        }
+                        let distance = signed(pa, sa, pb, sb, apart);
                         closest = Some(closest.map_or(distance, |closest| closest.min(distance)));
                     }
                 }
@@ -808,6 +806,26 @@ impl<'a> Body<'a> {
             .collect();
         Self { name, role, parts, bounds }
     }
+}
+
+/// The signed distance (m) of two parts the scene measured `apart` (zero
+/// when they overlap): `apart` itself, or for overlapping parts the depth of
+/// parry's contact, never above zero. parry's contact can call a pair the
+/// scene measured as overlapping a few micrometres apart; it stays touching.
+fn signed(
+    pa: &na::Isometry3<f64>,
+    sa: &SharedShape,
+    pb: &na::Isometry3<f64>,
+    sb: &SharedShape,
+    apart: f64,
+) -> f64 {
+    if apart > 0.0 {
+        return apart;
+    }
+    query::contact(pa, sa.as_ref(), pb, sb.as_ref(), 0.0)
+        .ok()
+        .flatten()
+        .map_or(0.0, |contact| contact.dist.min(0.0))
 }
 
 /// The convex shape of `geometry` placed at `origin`.

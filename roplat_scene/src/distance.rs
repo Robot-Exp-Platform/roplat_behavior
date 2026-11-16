@@ -40,6 +40,14 @@
 //! 1e-16 of the shapes' coordinates. A distance can come out smaller than
 //! the truth, by at most [`GAP`] when GJK converges; the tests report how
 //! much it does over every pair of shapes the scene builds.
+//!
+//! The configuration checks compare these distances with the padding
+//! ([`within`]): a pair is in contact when its lower bound is at most its
+//! padding, so a pair the scene calls clear is clear by its padding but for
+//! rounding. parry's contact query, which these checks used before, takes
+//! its distance from the same early-stopping GJK: it called pairs up to
+//! 1.5e-5 m beyond their padding in contact, at a distance above the
+//! padding (see `tests/distance.rs`).
 
 use nalgebra as na;
 use parry3d_f64::{
@@ -69,12 +77,33 @@ pub(crate) fn distance(
     pb: &na::Isometry3<f64>,
     b: &dyn Shape,
 ) -> f64 {
-    SceneQueries.distance(&pa.inv_mul(pb), a, b).unwrap_or(0.0)
+    within(pa, a, pb, b, f64::INFINITY)
+}
+
+/// The [`distance`] where it is at most `limit` (m). A pair farther apart
+/// may come out as any lower bound above `limit`: GJK stops once its bound
+/// passes the limit, which is all a check against a padding needs.
+pub(crate) fn within(
+    pa: &na::Isometry3<f64>,
+    a: &dyn Shape,
+    pb: &na::Isometry3<f64>,
+    b: &dyn Shape,
+    limit: f64,
+) -> f64 {
+    SceneQueries { limit }
+        .distance(&pa.inv_mul(pb), a, b)
+        .unwrap_or(0.0)
 }
 
 /// parry's default queries, except the distance, which is the lower bound
-/// of [`separation`] for convex pairs, at any depth of compound.
-struct SceneQueries;
+/// of [`separation`] for convex pairs, at any depth of compound. A convex
+/// pair's distance is exact (to [`GAP`]) up to `limit`; beyond, it may stop
+/// at a bound above `limit`. A compound's distance, the least over its
+/// parts, is then exact where it is at most `limit` too: the part that
+/// gives it is measured exactly.
+struct SceneQueries {
+    limit: f64,
+}
 
 impl QueryDispatcher for SceneQueries {
     fn intersection_test(
@@ -101,7 +130,8 @@ impl QueryDispatcher for SceneQueries {
             let (Some(a), Some(b)) = (Rounded::of(g1), Rounded::of(g2)) else {
                 return Err(Unsupported);
             };
-            Ok((separation(pos12, a.core, b.core) - a.radius - b.radius).max(0.0))
+            let radii = a.radius + b.radius;
+            Ok((separation(pos12, a.core, b.core, self.limit + radii) - radii).max(0.0))
         }
     }
 
@@ -182,7 +212,7 @@ impl<'a> Rounded<'a> {
 
 /// A lower bound (m) of the distance between convex `g1` and `g2` posed at
 /// `pos12` in `g1`'s frame, zero or less when they overlap: the largest
-/// support gap GJK meets.
+/// support gap GJK meets, which it stops refining once it passes `limit`.
 ///
 /// GJK (Gilbert, Johnson and Keerthi, 1988) works on the Minkowski
 /// difference `g1 − g2`, whose nearest point to the origin is the
@@ -191,7 +221,12 @@ impl<'a> Rounded<'a> {
 /// along `n = −p / |p|`, bounds the difference by the plane `n·x = n·s`, at
 /// `−n·s` from the origin. `s` joins the simplex, which keeps only the
 /// face its new nearest point lies on.
-fn separation(pos12: &na::Isometry3<f64>, g1: &dyn SupportMap, g2: &dyn SupportMap) -> f64 {
+fn separation(
+    pos12: &na::Isometry3<f64>,
+    g1: &dyn SupportMap,
+    g2: &dyn SupportMap,
+    limit: f64,
+) -> f64 {
     let support = |n: &na::Vector3<f64>| -> na::Vector3<f64> {
         g1.local_support_point(n).coords - g2.support_point(pos12, &-n).coords
     };
@@ -217,12 +252,12 @@ fn separation(pos12: &na::Isometry3<f64>, g1: &dyn SupportMap, g2: &dyn SupportM
         let n = -nearest / distance;
         let s = support(&n);
         lower = lower.max(-n.dot(&s));
-        if upper - lower <= GAP {
+        if upper - lower <= GAP || lower > limit {
             break;
         }
         simplex.push(s);
     }
-    if upper - lower > GAP {
+    if upper - lower > GAP && lower <= limit {
         // Stopped short (rounding in a thin simplex, or the iterations):
         // parry's GJK may end on a better direction; the gap along it, and
         // along the line between the points it ends with, bound the
