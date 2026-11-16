@@ -17,3 +17,9 @@ categories = ["science::robotics"]
 [patch.crates-io]
 roplat = { path = "../roplat/roplat" }
 roplat_msgs = { path = "../roplat/roplat_msgs" }
+
+# Convex decomposition (`roplat_scene`'s `add_concave_object`) runs in parry
+# and is about 200 times slower unoptimised: half a minute instead of a
+# fraction of a second for a simple bin.
+[profile.dev.package.parry3d-f64]
+opt-level = 3
