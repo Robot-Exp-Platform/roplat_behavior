@@ -20,7 +20,8 @@
 //!   measured by parry, check that the search found the least.
 //!
 //! The same pairs measured by parry's default `query::distance` and by
-//! `query::contact` are printed beside them.
+//! `query::contact` are printed beside them. The configuration checks are
+//! tested against the same truths at the edge of the padding.
 
 use std::{
     f64::consts::{FRAC_PI_2, PI, TAU},
@@ -34,7 +35,7 @@ use parry3d_f64::{
     shape::{Cuboid, SharedShape},
 };
 use roplat_description::{Geometry, RobotModel};
-use roplat_scene::PlanningScene;
+use roplat_scene::{CollisionCheck, PlanningScene};
 
 /// Sides of the prisms that bound a cylinder: they differ from it by less
 /// than 3.1e-4 of its radius.
@@ -182,6 +183,108 @@ fn every_pair_of_shapes_agrees_with_an_independent_measure() {
             println!("FIX15B survey {link:?}-{object:?}: {stats}");
         }
     }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// How far (m) inside or beyond its padding a pair is placed to test the
+/// configuration checks: above the scene's errors ([`OVER`], [`UNDER`]),
+/// below the 1e-5 m by which parry's GJK misplaces capsules and cylinders.
+const EDGE: f64 = 1e-7;
+
+/// A padding (m) under which overlapping pairs are checked besides none:
+/// with a margin, parry's GJK can stop short of finding an overlap.
+const OVERLAP_PADDING: f64 = 0.01;
+
+/// The configuration checks (`first_contact`, `contacts`, `is_free`) at
+/// the edge of the padding, for every pair of shapes, against the truths of
+/// [`every_pair_of_shapes_agrees_with_an_independent_measure`]:
+///
+/// - a pair [`EDGE`] inside its padding is in contact, at a distance the
+///   truth admits, the same, bit for bit, as [`PlanningScene::clearance`]
+///   gives;
+/// - a pair [`EDGE`] beyond its padding is free;
+/// - an overlapping pair is in contact, with no padding and with
+///   [`OVERLAP_PADDING`], at a distance of zero or less.
+///
+/// parry's contact query, which the checks used before, is asked the same
+/// and its answers counted.
+#[test]
+fn padded_checks_agree_with_the_truth_at_the_padding() {
+    let mut random = Random(0x5ce1_f16a_0ad0_0003);
+    const SAMPLES: usize = 48;
+    let mut failures = Vec::new();
+    // Pairs checked inside, beyond and overlapping; parry's contact above
+    // the padding inside it, in contact beyond it, apart while overlapping.
+    let (mut checked, mut parry) = ([0; 3], [0; 3]);
+    for link in LINKS {
+        for object in OBJECTS {
+            for k in 0..SAMPLES {
+                let a = Solid::random(link, &mut random).posed(&mut random);
+                let b = Solid::random(object, &mut random);
+                let b = place(&a, b, k % 2 == 1, Turn::ALL[k / 2 % 3], &mut random);
+                let truth = truth(&a, &b);
+                let (lower, upper) = truth.bounds();
+                let mut scene = scene_of(&a, &b);
+                let ((pa, sa), (pb, sb)) = (a.parry(), b.parry());
+                let by_parry = |padding: f64| {
+                    query::contact(&pa, &*sa, &pb, &*sb, padding)
+                        .unwrap()
+                        .map(|contact| contact.dist)
+                };
+                let mut fail = |what: &str| {
+                    failures.push(format!(
+                        "{link:?}-{object:?} {k}: {what} for {truth:?}; a {:?} {:?}, b {:?} {:?}",
+                        a.pose, a.half, b.pose, b.half
+                    ));
+                };
+                if upper == 0.0 {
+                    checked[2] += 1;
+                    for padding in [0.0, OVERLAP_PADDING] {
+                        scene.set_padding(padding).unwrap();
+                        match scene.first_contact(&[]) {
+                            Some(contact) if contact.distance <= 0.0 => {}
+                            other => fail(&format!("overlapping, padding {padding}, {other:?}")),
+                        }
+                    }
+                    parry[2] += usize::from(
+                        [0.0, OVERLAP_PADDING]
+                            .iter()
+                            .any(|&padding| by_parry(padding).is_none_or(|d| d > 0.0)),
+                    );
+                    continue;
+                }
+                let inside = upper + EDGE;
+                scene.set_padding(inside).unwrap();
+                checked[0] += 1;
+                let nearest = scene.clearance(&[]).unwrap();
+                match scene.first_contact(&[]) {
+                    Some(contact)
+                        if truth.admits(contact.distance)
+                            && contact.distance == nearest.distance
+                            && scene.contacts(&[]) == [contact.clone()] => {}
+                    other => fail(&format!(
+                        "padding {inside}, {other:?}, clearance {nearest:?}"
+                    )),
+                }
+                parry[0] += usize::from(by_parry(inside).is_none_or(|d| d > inside));
+                let beyond = lower - EDGE;
+                if beyond > 0.0 {
+                    scene.set_padding(beyond).unwrap();
+                    checked[1] += 1;
+                    if !scene.is_free(&[]) {
+                        fail(&format!("padding {beyond}, {:?}", scene.first_contact(&[])));
+                    }
+                    parry[1] += usize::from(by_parry(beyond).is_some());
+                }
+            }
+        }
+    }
+    println!(
+        "FIX16A padding edge ({EDGE:.0e} m): {} pairs inside, {} beyond, {} overlapping; \
+         parry's contact query put {} inside above the padding, {} beyond in contact, \
+         {} overlapping with no contact or a positive distance",
+        checked[0], checked[1], checked[2], parry[0], parry[1], parry[2]
+    );
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
@@ -572,6 +675,11 @@ fn prism(half: &Vector3<f64>, outside: bool) -> SharedShape {
 /// The scene's distance from a link shaped `a` to an object `b`, zero when
 /// they overlap.
 fn scene_distance(a: &Solid, b: &Solid) -> f64 {
+    scene_of(a, b).clearance(&[]).unwrap().distance.max(0.0)
+}
+
+/// A scene of a link shaped `a` and an object `b`, with no padding.
+fn scene_of(a: &Solid, b: &Solid) -> PlanningScene<0> {
     let urdf = format!(
         r#"<robot name="one"><link name="a"><collision><geometry>{}</geometry></collision></link></robot>"#,
         a.urdf()
@@ -590,7 +698,7 @@ fn scene_distance(a: &Solid, b: &Solid) -> f64 {
     } else {
         scene.add_object("b", &b.geometry(), b.pose).unwrap();
     }
-    scene.clearance(&[]).unwrap().distance.max(0.0)
+    scene
 }
 
 /// parry's default `query::distance`, and `query::contact`'s distance,
