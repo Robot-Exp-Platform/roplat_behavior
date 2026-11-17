@@ -41,11 +41,7 @@ fn every_edge_is_listed_with_its_kind() {
             FrameEdge {
                 parent: HAND,
                 child: FINGER,
-                kind: EdgeKind::Joint {
-                    joint: "finger",
-                    kind: JointKind::Prismatic,
-                    group: None,
-                },
+                kind: EdgeKind::Joint { joint: "finger", kind: JointKind::Prismatic, group: None },
             },
             FrameEdge { parent: HAND, child: CAMERA, kind: EdgeKind::Fixed },
             FrameEdge { parent: CAMERA, child: MUG, kind: EdgeKind::Dynamic },
@@ -89,14 +85,17 @@ fn a_fixed_edge_takes_a_new_pose() {
     );
     let mut broken = recalibrated;
     broken.position.x = f64::NAN;
-    assert_eq!(tree.set_fixed(CAMERA, &broken), Err(FrameError::InvalidValue));
+    assert_eq!(
+        tree.set_fixed(CAMERA, &broken),
+        Err(FrameError::InvalidValue)
+    );
     assert_pose(tree.lookup_static(HAND, CAMERA).unwrap(), recalibrated);
 }
 
 #[test]
 fn a_buffer_keeps_its_history_across_a_new_calibration() {
-    let mut frames = FrameBuffer::new(cell(History::new(8), History::new(8)), clock::MONOTONIC)
-        .unwrap();
+    let mut frames =
+        FrameBuffer::new(cell(History::new(8), History::new(8)), clock::MONOTONIC).unwrap();
     let arm = frames.tree().group::<2>("arm").unwrap();
     frames.set_joints(arm, ms(0.0), &[0.3, -0.2]).unwrap();
     frames.set_joints(arm, ms(10.0), &[0.5, -0.4]).unwrap();
@@ -120,7 +119,10 @@ fn a_buffer_keeps_its_history_across_a_new_calibration() {
     );
     let moved = (after.quat().translation.vector - before.quat().translation.vector).norm();
     assert!((moved - 0.01).abs() < 1e-9, "the mug moved {moved} m");
-    assert_pose(frames.tree().lookup_static(HAND, CAMERA).unwrap(), recalibrated);
+    assert_pose(
+        frames.tree().lookup_static(HAND, CAMERA).unwrap(),
+        recalibrated,
+    );
     assert_eq!(
         frames.set_fixed(MUG, &Pose::IDENTITY),
         Err(FrameError::NotStatic(MUG))

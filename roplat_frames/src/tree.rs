@@ -183,11 +183,7 @@ impl FrameTree {
             },
             Edge::Dynamic(_) => EdgeKind::Dynamic,
         };
-        Some(FrameEdge {
-            parent: self.frames[frame.parent].id,
-            child: frame.id,
-            kind,
-        })
+        Some(FrameEdge { parent: self.frames[frame.parent].id, child: frame.id, kind })
     }
 
     /// Replaces the pose of `child` in its parent, which a fixed edge

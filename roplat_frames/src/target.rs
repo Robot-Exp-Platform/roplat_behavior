@@ -196,7 +196,10 @@ pub fn target_pose(
     if pixels.len() < 4 {
         return Err(TargetPoseError::TooFewPoints(pixels.len()));
     }
-    if let Some(k) = object.iter().position(|p| !(p[2].abs() <= 1e-9)) {
+    if let Some(k) = object
+        .iter()
+        .position(|p| p[2].is_nan() || p[2].abs() > 1e-9)
+    {
         return Err(TargetPoseError::OffPlane(k));
     }
     let lens = Lens::new(info).ok_or(TargetPoseError::Camera)?;

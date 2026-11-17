@@ -88,7 +88,10 @@ fn silence_and_stop_ramp_the_command_down() {
     for _ in 0..30 {
         seen.push(control(at([0.0]), period).0[0]);
     }
-    assert!(seen[..5].iter().all(|&c| (c - 1.0).abs() < 1e-12), "{seen:?}");
+    assert!(
+        seen[..5].iter().all(|&c| (c - 1.0).abs() < 1e-12),
+        "{seen:?}"
+    );
     assert!((seen[5] - 0.95).abs() < 1e-12, "{seen:?}");
     assert_eq!(*seen.last().unwrap(), 0.0);
 

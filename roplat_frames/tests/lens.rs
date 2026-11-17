@@ -196,7 +196,10 @@ fn the_pose_through_the_lens_needs_no_undistorting() {
         .unwrap_or_else(|| panic!("view {k}: no board in the raw image"));
         let through = target_pose(&raw, &BOARD.corners(), &info()).unwrap();
         let (offset, turn) = error(&through, truth);
-        let ideal: Vec<[f64; 2]> = raw.iter().map(|&p| undistort(&info(), p).unwrap()).collect();
+        let ideal: Vec<[f64; 2]> = raw
+            .iter()
+            .map(|&p| undistort(&info(), p).unwrap())
+            .collect();
         let undistorted = target_pose(&ideal, &BOARD.corners(), &pinhole).unwrap();
         let (u_offset, u_turn) = error(&undistorted, truth);
         eprintln!(
@@ -204,7 +207,10 @@ fn the_pose_through_the_lens_needs_no_undistorting() {
              undistorted first {u_offset:.6} m, {u_turn:.4} deg",
             through.rms
         );
-        assert!(offset < 0.001 && turn < 0.2 && through.rms < 0.2, "view {k}");
+        assert!(
+            offset < 0.001 && turn < 0.2 && through.rms < 0.2,
+            "view {k}"
+        );
         let apart = (through.pose.translation.vector - undistorted.pose.translation.vector).norm();
         assert!(apart < 2e-4, "view {k}: the two poses are {apart} m apart");
     }
@@ -225,7 +231,10 @@ fn exact_raw_pixels_give_the_exact_pose() {
         .collect();
     let pose = target_pose(&raw, &corners, &info()).unwrap();
     let (offset, turn) = error(&pose, &truth);
-    assert!(offset < 1e-9 && turn < 1e-7 && pose.rms < 1e-6, "{offset} m, {turn} deg");
+    assert!(
+        offset < 1e-9 && turn < 1e-7 && pose.rms < 1e-6,
+        "{offset} m, {turn} deg"
+    );
     // A fisheye sees nothing beyond 90 degrees off its axis.
     let fisheye = CameraInfo {
         distortion_model: distortion_model::EQUIDISTANT,
@@ -246,7 +255,17 @@ fn exact_raw_pixels_give_the_exact_pose() {
 #[test]
 fn a_wider_rectified_camera_keeps_the_rim() {
     let wide = CameraInfo {
-        k: [0.8 * FOCAL, 0.0, 319.5, 0.0, 0.8 * FOCAL, 239.5, 0.0, 0.0, 1.0],
+        k: [
+            0.8 * FOCAL,
+            0.0,
+            319.5,
+            0.0,
+            0.8 * FOCAL,
+            239.5,
+            0.0,
+            0.0,
+            1.0,
+        ],
         ..rectified(&info())
     };
     let map = Rectify::onto(&info(), &wide).unwrap();
@@ -256,7 +275,10 @@ fn a_wider_rectified_camera_keeps_the_rim() {
             .unwrap_or_else(|| panic!("view {k}: no board in the wide image"));
         let pose = target_pose(&corners, &BOARD.corners(), map.info()).unwrap();
         let (offset, turn) = error(&pose, truth);
-        eprintln!("wide view {k}: {offset:.6} m, {turn:.4} deg, rms {:.3} px", pose.rms);
+        eprintln!(
+            "wide view {k}: {offset:.6} m, {turn:.4} deg, rms {:.3} px",
+            pose.rms
+        );
         assert!(offset < 0.0015 && turn < 0.3 && pose.rms < 0.25, "view {k}");
     }
 }

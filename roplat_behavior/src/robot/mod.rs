@@ -48,9 +48,9 @@ pub use multirotor::{VelocitySetpoint, YawCommand};
 
 pub use battery::{Battery, BatteryFaults, BatteryReading, BatteryStatus};
 pub use car::{CarGeometry, CarLike, SteerCommand};
-pub use segmentation::{LabelClass, LabelImage};
 pub use observe::{ControlObservation, ControlObserver};
 pub use roplat_msgs::{CartesianLimits, JointLimits, LoadState};
+pub use segmentation::{LabelClass, LabelImage};
 pub use spaces::{
     BasePoseSpace, BaseVelocitySpace, CenterOfMassSpace, CoriolisInputSpace, EndSpace, FlangeSpace,
     FootSpace, GaitCommand, GaitSpace, GravityInputSpace, HandSpace, JacobianSpace, JointSpace,

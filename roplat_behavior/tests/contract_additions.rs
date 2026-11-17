@@ -170,7 +170,9 @@ fn east_south(duration: Duration) -> VelocitySetpoint {
 #[test]
 fn a_velocity_setpoint_flies_in_the_world_frame_for_its_duration() {
     let mut vehicle = PointMass::new(true);
-    vehicle.send_velocity(east_south(Duration::from_secs(3))).unwrap();
+    vehicle
+        .send_velocity(east_south(Duration::from_secs(3)))
+        .unwrap();
     let dt = Duration::from_millis(10);
     for _ in 0..500 {
         vehicle.step(dt);
@@ -178,7 +180,10 @@ fn a_velocity_setpoint_flies_in_the_world_frame_for_its_duration() {
     // 3 s east at 1.5 m/s and south at 1 m/s, then a hover: the world
     // frame is east-north-up, so south is -y.
     let p = vehicle.state.position;
-    assert!((p.x - 4.5).abs() < 0.02 && (p.y + 3.0).abs() < 0.02, "{p:?}");
+    assert!(
+        (p.x - 4.5).abs() < 0.02 && (p.y + 3.0).abs() < 0.02,
+        "{p:?}"
+    );
     assert_eq!(vehicle.state.velocity, Some(Vector3::ZERO));
 
     // A positive yaw rate turns left (counter-clockwise from above).
@@ -311,7 +316,8 @@ fn a_held_steering_angle_drives_the_arc_its_curvature_gives() {
     // Steer left at 0.3 rad and drive a quarter circle once the wheels
     // have turned: the reference point turns counter-clockwise on a circle
     // of radius wheelbase / tan(0.3).
-    car.drive(SteerCommand { speed: 2.0, steering_angle: 0.3 }).unwrap();
+    car.drive(SteerCommand { speed: 2.0, steering_angle: 0.3 })
+        .unwrap();
     for _ in 0..100 {
         car.step(0.01);
     }
@@ -336,10 +342,15 @@ fn a_held_steering_angle_drives_the_arc_its_curvature_gives() {
 #[test]
 fn steering_beyond_the_limit_saturates() {
     let mut car = Bicycle::new();
-    car.drive(SteerCommand { speed: 1.0, steering_angle: -2.0 }).unwrap();
+    car.drive(SteerCommand { speed: 1.0, steering_angle: -2.0 })
+        .unwrap();
     assert_eq!(car.command.steering_angle, -0.6);
-    car.drive(SteerCommand { speed: -1.0, steering_angle: 0.7 }).unwrap();
-    assert_eq!(car.command, SteerCommand { speed: -1.0, steering_angle: 0.6 });
+    car.drive(SteerCommand { speed: -1.0, steering_angle: 0.7 })
+        .unwrap();
+    assert_eq!(
+        car.command,
+        SteerCommand { speed: -1.0, steering_angle: 0.6 }
+    );
 }
 
 #[test]
@@ -452,7 +463,10 @@ fn battery_faults_are_a_set() {
     let mut union = BatteryFaults::NONE;
     for (k, f) in named.iter().enumerate() {
         assert_eq!(f.bits().count_ones(), 1, "{f:?}");
-        assert!(named[..k].iter().all(|g| !g.contains(*f)), "{f:?} repeats a bit");
+        assert!(
+            named[..k].iter().all(|g| !g.contains(*f)),
+            "{f:?} repeats a bit"
+        );
         union |= *f;
     }
     assert_eq!(union, BatteryFaults::ALL);
@@ -511,7 +525,9 @@ impl Camera for LabellingCamera {
             Some(LabelFault::WrongSize) => image.width = 3,
             Some(LabelFault::UnlistedId) => image.ids[11] = 4,
             Some(LabelFault::DuplicateClass) => {
-                image.classes.push(LabelClass { id: 3, name: "crate".into() });
+                image
+                    .classes
+                    .push(LabelClass { id: 3, name: "crate".into() });
             }
             Some(LabelFault::Unnamed) => image.classes[0].name.clear(),
             Some(LabelFault::ShortIds) => {
@@ -519,7 +535,10 @@ impl Camera for LabellingCamera {
             }
             None => {}
         }
-        Ok(Stamped::new(header(self.seq), Frame { labels: Some(image) }))
+        Ok(Stamped::new(
+            header(self.seq),
+            Frame { labels: Some(image) },
+        ))
     }
 }
 

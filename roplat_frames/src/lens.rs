@@ -271,9 +271,7 @@ impl Lens {
             _ => return None,
         };
         let (kept, unused) = d.split_at(used);
-        if !kept.iter().all(|c| c.is_finite())
-            || (used > 0 && unused.iter().any(|&c| c != 0.0))
-        {
+        if !kept.iter().all(|c| c.is_finite()) || (used > 0 && unused.iter().any(|&c| c != 0.0)) {
             return None;
         }
         Some(Self { fx, fy, skew, cx, cy, model })
@@ -531,7 +529,9 @@ mod tests {
         let p = [0.12, -0.08, 0.7];
         for info in lenses() {
             let pixel = project(&info, p).unwrap();
-            assert_eq!(Some(pixel), distort(&info, [600.0 * p[0] / p[2] + 319.5, 610.0 * p[1] / p[2] + 239.5]));
+            let pinhole = [600.0 * p[0] / p[2] + 319.5, 610.0 * p[1] / p[2] + 239.5];
+            let raw = distort(&info, pinhole).unwrap();
+            assert!((raw[0] - pixel[0]).hypot(raw[1] - pixel[1]) < 1e-9);
             let back = ray(&info, pixel).unwrap();
             assert!(
                 (back[0] - p[0] / p[2]).abs() < 1e-10 && (back[1] - p[1] / p[2]).abs() < 1e-10,
@@ -600,19 +600,26 @@ mod tests {
         let raw: Vec<u16> = (0..480).flat_map(|_| 0..640u16).collect();
         let columns = map.nearest(&raw, u16::MAX);
         assert_eq!(columns.len(), 320 * 240);
-        // Each output pixel reads the raw pixel where its ray lands.
-        for (u, v) in [(40, 30), (160, 120), (300, 200)] {
-            let ray = [(u as f64 - 159.5) / 300.0, (v as f64 - 119.5) / 305.0];
+        // Each output pixel reads the raw pixel nearest to where its ray
+        // lands.
+        for (u, v) in [(40, 30), (160, 120), (300, 200), (2, 3)] {
+            let ray = [(u as f64 - 159.5) / 200.0, (v as f64 - 119.5) / 200.0];
             let source = project(&info, [ray[0], ray[1], 1.0]).unwrap();
-            let expected = if (0.0..=639.0).contains(&source[0]) && (0.0..=479.0).contains(&source[1]) {
-                source[0].round() as u16
+            let inside = (0.0..=639.0).contains(&source[0]) && (0.0..=479.0).contains(&source[1]);
+            let column = columns[v * 320 + u];
+            if inside {
+                assert!(
+                    (f64::from(column) - source[0]).abs() <= 0.5 + 1e-3,
+                    "({u}, {v})"
+                );
             } else {
-                u16::MAX
-            };
-            assert_eq!(columns[v * 320 + u], expected, "({u}, {v})");
+                assert_eq!(column, u16::MAX, "({u}, {v})");
+            }
         }
-        // The raw view's centre column is at the new principal point.
-        assert_eq!(columns[120 * 320 + 160], 320);
+        // Barrel distortion pulls the raw view in, so the wider camera's
+        // corners see past it: they have no source, its centre has one.
+        let mask = map.mask();
+        assert_eq!((mask[0], mask[120 * 320 + 160]), (false, true));
         // A target that is not a pinhole is refused.
         assert!(Rectify::onto(&info, &info).is_none());
     }

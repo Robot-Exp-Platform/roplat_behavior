@@ -288,7 +288,10 @@ fn images_calibrate_a_camera_on_the_flange() {
 #[test]
 fn a_rendered_board_is_found_in_its_order() {
     let image = BOARD.render(20, 30).unwrap();
-    assert_eq!((image.width(), image.height(), image.channels()), (260, 200, 1));
+    assert_eq!(
+        (image.width(), image.height(), image.channels()),
+        (260, 200, 1)
+    );
     // The top-left square is black, the margin white.
     assert_eq!(image.pixel(35, 35), Some(&[0u8][..]));
     assert_eq!(image.pixel(55, 35), Some(&[255u8][..]));
@@ -308,6 +311,10 @@ fn a_rendered_board_is_found_in_its_order() {
         let off = (c[0] - expected[0]).hypot(c[1] - expected[1]);
         assert!(off < 0.1, "corner {id} at {c:?}, not {expected:?}");
     }
-    assert!(Chessboard { columns: 1, rows: 6, square: 0.025 }.render(20, 30).is_none());
+    assert!(
+        Chessboard { columns: 1, rows: 6, square: 0.025 }
+            .render(20, 30)
+            .is_none()
+    );
     assert!(BOARD.render(0, 30).is_none());
 }

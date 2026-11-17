@@ -58,7 +58,10 @@ fn derivative(f: impl Fn(Vector3<f64>) -> UnitQuaternion<f64>) -> Matrix3<f64> {
 fn exp_and_log_are_inverse() {
     for phi in tangents() {
         let back = so3::log(&so3::exp(&phi));
-        assert!((back - phi).norm() < 1e-12 * phi.norm().max(1.0), "{phi:?} -> {back:?}");
+        assert!(
+            (back - phi).norm() < 1e-12 * phi.norm().max(1.0),
+            "{phi:?} -> {back:?}"
+        );
     }
     // A tangent beyond a half turn comes back as the shorter one.
     let long = Vector3::new(0.0, 0.0, 4.0);
@@ -80,7 +83,10 @@ fn the_jacobians_are_the_derivatives_of_the_exponential() {
         let right = derivative(|d| r.inverse() * so3::exp(&(phi + d)));
         let (jl, jr) = (so3::left_jacobian(&phi), so3::right_jacobian(&phi));
         assert!((left - jl).norm() < 1e-7, "J_l at {phi:?}: {left} vs {jl}");
-        assert!((right - jr).norm() < 1e-7, "J_r at {phi:?}: {right} vs {jr}");
+        assert!(
+            (right - jr).norm() < 1e-7,
+            "J_r at {phi:?}: {right} vs {jr}"
+        );
     }
 }
 

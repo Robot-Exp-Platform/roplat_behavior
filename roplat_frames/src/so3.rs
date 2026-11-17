@@ -45,7 +45,11 @@ pub fn hat(v: &Vector3<f64>) -> Matrix3<f64> {
 /// The vector of a skew-symmetric matrix, the inverse of [`hat`]; of a
 /// matrix that is not skew-symmetric, the vector of its skew part.
 pub fn vee(m: &Matrix3<f64>) -> Vector3<f64> {
-    Vector3::new(m[(2, 1)] - m[(1, 2)], m[(0, 2)] - m[(2, 0)], m[(1, 0)] - m[(0, 1)]) / 2.0
+    Vector3::new(
+        m[(2, 1)] - m[(1, 2)],
+        m[(0, 2)] - m[(2, 0)],
+        m[(1, 0)] - m[(0, 1)],
+    ) / 2.0
 }
 
 /// The rotation of `phi`: `|phi|` radians about `phi`'s direction.

@@ -71,7 +71,10 @@ fn an_observation_starts_with_nothing_but_its_class() {
     let stamp = Stamp::new(clock::SIMULATION, 1_500_000_000);
     let frame = FrameId::new(7);
     let bare = ObjectObservation::new("cup", stamp, frame);
-    assert_eq!((bare.class.as_str(), bare.stamp, bare.frame), ("cup", stamp, frame));
+    assert_eq!(
+        (bare.class.as_str(), bare.stamp, bare.frame),
+        ("cup", stamp, frame)
+    );
     assert!(
         bare.class_id.is_none()
             && bare.score.is_none()
