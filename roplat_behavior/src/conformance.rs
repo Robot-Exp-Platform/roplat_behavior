@@ -962,7 +962,7 @@ where
     Ok(SessionReport { durations, pattern, break_error })
 }
 
-// roplat_behavior 0.10: checks for the batch-20 contract additions
+// Checks for the contracts added in 0.10
 // (segmentation, battery, car-like vehicles).
 
 use crate::{Battery, BatteryStatus, CarLike, LabelImage, SteerCommand};

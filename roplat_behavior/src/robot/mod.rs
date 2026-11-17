@@ -15,7 +15,7 @@ pub mod spaces;
 pub mod state;
 pub mod types;
 
-// roplat_behavior 0.10: the batch-20 contract additions (vehicles, battery,
+// The contracts added in 0.10 (vehicles, battery,
 // segmentation).
 pub mod battery;
 pub mod car;

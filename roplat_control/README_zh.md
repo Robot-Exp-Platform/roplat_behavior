@@ -12,7 +12,7 @@
 - 关节与笛卡尔阻抗（`impedance`）。
 - 重力补偿与计算力矩（`dynamics`）。
 - 跟踪控制器所用的目标源（`target`）。
-- 操作员遥操作（`teleop`）：`cartesian_teleop_control`，带死区、使能按键、输入超时与加速度限制。
+- 操作员遥操作（`teleop`）：`cartesian_teleop_control`，带死区、使能按键、输入超时与加速度限制；关节空间的对应物 `joint_jog_control`（`JogMapping`、`JogInput`）让每个关节不超过其加速度限制，并在位置限位前减速，停在限位内 `limit_margin` 处。
 - 笛卡尔伺服（`servo`）：`CartesianServo` 把末端速度旋量转为关节速度或位置命令；只在趋近奇异时减速，到关节限位即停，不超关节速度上限，可加接近障碍的减速系数。
 - 在笛卡尔位姿通道上跟随定时的工具位姿轨迹（`cartesian_follow`）：`CartesianTrajectoryFollower`、`cartesian_line`、`cartesian_arc`，以及按 `CartesianLimits` 定时的 `cartesian_line_within`、`cartesian_arc_within`。
 - 实时线程优先级（`set_realtime_priority`、`is_hardware_realtime`）。

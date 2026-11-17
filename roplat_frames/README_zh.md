@@ -9,11 +9,12 @@
 ## 内容
 
 - `frame_id` 在编译期由帧名得到 `FrameId`，生产者填写 `Header::frame` 时不需要持有注册表。
-- `FrameTree` 在构造时确定拓扑与静态变换：URDF 的连杆与关节经 `FrameTreeBuilder::model`，标定得到的外参经 `FrameTreeBuilder::fixed`。
+- `FrameTree` 在构造时确定拓扑：URDF 的连杆与关节经 `FrameTreeBuilder::model`，标定得到的外参经 `FrameTreeBuilder::fixed`。`FrameTree::edges` 列出每个坐标系的父系与放置方式（`EdgeKind::Fixed`、带关节组的 `Joint`、`Dynamic`）；`FrameTree::set_fixed` 与 `FrameBuffer::set_fixed` 替换固定边的位姿（例如重新标定之后），不必重建树，buffer 的历史也保留。
 - `FrameBuffer` 在同一时钟上保存关节位置与动态变换的时间历史，按 `Stamp` 回答 `FrameBuffer::lookup`。写入与查询不分配内存，也不阻塞。
 - 相机安装位置的手眼标定（`calibration::calibrate_hand_eye`，眼在手上或眼在手外），结果成为树中的固定边。
-- 从图像得到标定板位姿：`target::detect_chessboard` 以亚像素精度找出棋盘格角点，各视角下顺序一致；`target::target_pose` 求标定板位姿。
-- 按 `CameraInfo` 描述的镜头畸变：`lens::distort`、`lens::undistort` 与 `lens::Rectify`，支持 plumb_bob、rational polynomial 与鱼眼模型，相当于 `image_proc` 的校正。
+- 从图像得到标定板位姿：`target::detect_chessboard` 以亚像素精度找出棋盘格角点，各视角下顺序一致；`target::target_pose` 经相机镜头（含畸变）求标定板位姿，重投影误差按原始像素计，求不出时以 `TargetPoseError` 说明原因。`Chessboard::render` 画出可打印的棋盘。
+- 按 `CameraInfo` 描述的镜头畸变：`lens::distort`、`lens::undistort`、`lens::project`（光学系中的点到原始像素）与 `lens::ray`（原始像素到去畸变的射线），支持 plumb_bob（5 个系数）、rational polynomial 与鱼眼模型，相机矩阵的斜切也计入；`lens::Rectify` 相当于 `image_proc` 的校正，可保持原相机矩阵（`Rectify::new`），也可换成新的相机矩阵与尺寸（`Rectify::onto`，即 OpenCV 的 `newCameraMatrix`），`Rectify::mask` 标出没有来源的像素。
+- 旋转作为李群（`so3`）：`exp`、`log`、`hat`、`vee`，指数映射的左、右 Jacobian 及其逆。旋量与力旋量在坐标系间的变换（`twist`）：`adjoint`、`transform_twist`、`transform_wrench`。测试把 Jacobian 与 nalgebra 指数、对数映射的数值导数对照，把 adjoint 与刚体速度场和力旋量做功对照。
 - 8 位图像的通用处理（`image`）：`Image::crop` 裁剪；`Image::resize` 按最近邻、双线性或像素面积缩放；RGB、灰度（BT.601 亮度）、HSV（OpenCV 的 8 位约定）、NV12 与 YUYV（BT.601 或 BT.709，有限或全范围）、Bayer 原始图（双线性去马赛克）之间的转换。测试逐像素对照公开公式，并对照 OpenCV 4.14 与 GStreamer 1.20 的输出。
 - 带协方差的位姿与点（`uncertain`）：`UncertainPose::compose`、`inverse`、`transform_point` 按一阶传播 SE(3) 协方差，采用 Sola 等人《A micro Lie theory for state estimation in robotics》的右扰动约定；`parent_covariance` 换成父坐标系中平移与转角误差的形式。测试与蒙特卡洛对照。
 - feature `roplat`：`JointStateNode`，把关节状态记录到借来的缓冲中。
