@@ -67,6 +67,51 @@ to_py = ["dep:pyo3", "dep:roplat_behavior_ffi", "roplat_behavior_ffi/py"]
 
 `PhysicsEngine`、`AddSearchPath`、`Renderer`、`AttachFrom`、`Entity`、各实体构建 trait、`SimulationBackend`、`select_simulation_model` 与 `SimulationRhythm` 改从 `roplat_world` 引入；`roplat_data_dir()` 改为 `roplat_world::assets_dir()`。`RobotDescription`、`ModelFormat`、`SimulationModel` 仍在 `roplat_behavior`。URDF 的 `Geometry` 可以转换为 `Entity`。
 
+## 面板：停止与使能从运动中分出
+
+设备的停止、使能与状态从 `Robot` 移到第二个句柄 `Panel`。设备经 `HasPanel::panel()` 发出它，类型为 `Arc<dyn Panel>`。它的方法都取 `&self`，所以 `move_to` 占着控制句柄时，服务可以从别的线程停住设备。每个操作写明调用者（`by: &Actor`：`Device`、`Operator(name)`、`Agent(name)`、`App(name)`）。
+
+| 0.9（`Robot` 上，`&mut self`） | 0.10（`Panel` 上，`&self`） |
+|---|---|
+| `robot.stop()` | `panel.stop(&by)`：进行中的运动在 `panel.stop_bound()` 内返回 `Err(Stopped)`；不锁存 |
+| `robot.emergency_stop()` | `panel.emergency_stop(&by)`：只有锁存了才答 `Ok`，否则答 `NoEmergencyStop`，与原来相同 |
+| `robot.clear_emergency_stop()` | `panel.clear(&by) -> PanelStatus`：清除软件可以清除的一切停止，不论是谁引起的；需要现场复位的停止还在时答 `Err(LocalResetRequired)` |
+| `robot.enable()`、`robot.disable()`、`robot.pause()`、`robot.resume()` | `panel.enable(&by)` 等；缺省答 `NotSupported`，不是 `Ok` |
+| 无 | `panel.status() -> PanelStatus`：`enabled`、`paused`、`software_estop`、`device_estop`、`protective_stop`（后两个取 `Release::Clear` 或 `Release::OnSite`） |
+
+`Robot` 的 `stop`、`emergency_stop`、`enable`、`clear_emergency_stop` 在 0.10 里照常可用，标为弃用，下一个小版本删除。覆写它们的驱动编译时没有警告；调用它们的代码会有弃用警告，`-D warnings` 下即为错误。
+
+**驱动**在一个与驱动共享状态的小值上实现 `Panel`，在驱动上实现 `HasPanel`：
+
+```rust
+impl HasPanel for MyArm {
+    fn panel(&self) -> Arc<dyn Panel> {
+        Arc::new(MyPanel { shared: Arc::clone(&self.shared) })
+    }
+}
+```
+
+- 控制器有第二个通道（dashboard 端口、第二个现场总线客户端）的，停止从那里发。
+- 运动是本进程里循环的驱动，共享一个停止计数，循环每周期检查，变了就返回 `Err(RobotException::Stopped)`；参照是 `roplat_world::KinematicArm`。
+- 厂商的阻塞调用中途无法打断的，`stop` 答 `NotSupported`，文档写明。
+- `stop_bound()` 是设备结束运动并静止所需的时间，含减速，以及一个周期内最长的等待。
+- `status()` 从设备读：软件急停指经 `emergency_stop` 要求的急停；设备自己的按钮或安全回路是 `device_estop`，通常为 `Release::OnSite`；设备为保护自己而停是 `protective_stop`。
+
+在驱动的测试里跑 `conformance::check_panel(&mut robot, &check, joints, press)`：它从另一个线程停住运动并检查停止时限；检查急停在 `clear` 之前一直有效、`enable` 在此之前不成功；`press` 能按下设备自己的急停时，检查 `clear` 答 `LocalResetRequired`。
+
+**服务**（MCP、Web、控制台）在把机器人交给运动线程之前取 `robot.panel()`，不再另用一个 `Robot` 值来停止。谁可以做哪个恢复操作由服务定，面板不管。要留记录，就把面板包一层，发出去的是包装：
+
+```rust
+let log = Arc::new(LoggedPanel::new(robot.panel()));
+let for_agent: Arc<dyn Panel> = log.clone();
+let mut news = log.subscribe();           // news.next(timeout) -> EventBatch
+let last_ten = log.recent(10);            // PanelEvent { seq, at, by, op, outcome, after }
+```
+
+`LoggedPanel` 记下每个操作的调用者与回答；经它读状态时发现的、没有任何经它的操作能解释的状态变化，记为 `Actor::Device`／`PanelOp::Changed`。事件可用 serde 序列化。
+
+新的错误：`RobotException::Stopped`（停止结束了运动，或拒绝了这次调用）与 `RobotException::LocalResetRequired`。穷举匹配 `RobotException` 的代码要补上这两项。
+
 
 # 从 robot_behavior 0.8 迁移到 roplat_behavior 0.9
 

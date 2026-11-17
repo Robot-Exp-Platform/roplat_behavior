@@ -65,6 +65,7 @@ macro_rules! cxx_robot_api {
             <$ty as $crate::__private::roplat_behavior::Robot>::init(self)
         }
 
+        #[allow(deprecated, reason = "binds the deprecated `Robot` method for one more version")]
         fn enable(&mut self) -> $crate::__private::roplat_behavior::RobotResult<()> {
             <$ty as $crate::__private::roplat_behavior::Robot>::enable(self)
         }
@@ -81,10 +82,12 @@ macro_rules! cxx_robot_api {
             <$ty as $crate::__private::roplat_behavior::Robot>::reset(self)
         }
 
+        #[allow(deprecated, reason = "binds the deprecated `Robot` method for one more version")]
         fn stop(&mut self) -> $crate::__private::roplat_behavior::RobotResult<()> {
             <$ty as $crate::__private::roplat_behavior::Robot>::stop(self)
         }
 
+        #[allow(deprecated, reason = "binds the deprecated `Robot` method for one more version")]
         fn emergency_stop(&mut self) -> $crate::__private::roplat_behavior::RobotResult<()> {
             <$ty as $crate::__private::roplat_behavior::Robot>::emergency_stop(self)
         }
@@ -195,6 +198,7 @@ macro_rules! cxx_arm_bridge {
                 <$inner as $crate::__private::roplat_behavior::Robot>::init(&mut self.0)
             }
 
+            #[allow(deprecated, reason = "binds the deprecated `Robot` method for one more version")]
             fn enable(&mut self) -> $crate::__private::roplat_behavior::RobotResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::enable(&mut self.0)
             }
@@ -211,10 +215,12 @@ macro_rules! cxx_arm_bridge {
                 <$inner as $crate::__private::roplat_behavior::Robot>::reset(&mut self.0)
             }
 
+            #[allow(deprecated, reason = "binds the deprecated `Robot` method for one more version")]
             fn stop(&mut self) -> $crate::__private::roplat_behavior::RobotResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::stop(&mut self.0)
             }
 
+            #[allow(deprecated, reason = "binds the deprecated `Robot` method for one more version")]
             fn emergency_stop(&mut self) -> $crate::__private::roplat_behavior::RobotResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::emergency_stop(&mut self.0)
             }

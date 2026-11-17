@@ -81,6 +81,18 @@ pub enum RobotException {
     /// [`Robot::emergency_stop`](crate::Robot::emergency_stop).
     #[error("the robot stopped but cannot latch an emergency stop")]
     NoEmergencyStop,
+
+    /// A stop ended the motion before it reached its target, or a stop that
+    /// holds the device refused the call; see [`Panel`](crate::Panel). The
+    /// panel's status says what holds the device.
+    #[error("the robot is stopped")]
+    Stopped,
+
+    /// A stop that only a reset at the device releases still holds it, e.g.
+    /// a pressed emergency-stop button; software cannot clear it. See
+    /// [`Panel::clear`](crate::Panel::clear).
+    #[error("a stop holds the robot that needs a reset at the device")]
+    LocalResetRequired,
 }
 
 /// A convenient alias for `Result<T, `[`RobotException`]`>`.

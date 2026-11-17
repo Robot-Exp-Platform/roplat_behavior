@@ -67,6 +67,51 @@ Import the macros and classes from `roplat_behavior_ffi`. Code of your own that 
 
 `PhysicsEngine`, `AddSearchPath`, `Renderer`, `AttachFrom`, `Entity`, the entity builders, `SimulationBackend`, `select_simulation_model` and `SimulationRhythm` are imported from `roplat_world`; `roplat_data_dir()` is `roplat_world::assets_dir()`. `RobotDescription`, `ModelFormat` and `SimulationModel` stay in `roplat_behavior`. A URDF `Geometry` converts into an `Entity`.
 
+## The panel: stopping and enabling apart from motion
+
+A device's stops, enabling and status move from `Robot` to a second handle, the `Panel`, which the device issues with `HasPanel::panel()` as an `Arc<dyn Panel>`. Its methods take `&self`, so a service can stop a device from another thread while `move_to` holds the control handle. Every operation names its caller (`by: &Actor`: `Device`, `Operator(name)`, `Agent(name)`, `App(name)`).
+
+| 0.9 (`&mut self` on `Robot`) | 0.10 (`&self` on `Panel`) |
+|---|---|
+| `robot.stop()` | `panel.stop(&by)`: a motion in progress returns `Err(Stopped)` within `panel.stop_bound()`; nothing latches |
+| `robot.emergency_stop()` | `panel.emergency_stop(&by)`: `Ok` only when latched, else `NoEmergencyStop`, as before |
+| `robot.clear_emergency_stop()` | `panel.clear(&by) -> PanelStatus`: releases every stop software may release, whoever caused it; `Err(LocalResetRequired)` while a stop that needs an on-site reset holds the device |
+| `robot.enable()`, `robot.disable()`, `robot.pause()`, `robot.resume()` | `panel.enable(&by)` and so on; they default to `NotSupported`, not `Ok` |
+| none | `panel.status() -> PanelStatus`: `enabled`, `paused`, `software_estop`, `device_estop`, `protective_stop` (the last two with `Release::Clear` or `Release::OnSite`) |
+
+`Robot::stop`, `emergency_stop`, `enable` and `clear_emergency_stop` still work in 0.10 and are deprecated; they go in the next minor version. A driver that overrides them compiles without warnings; code that calls them gets a deprecation warning, which `-D warnings` turns into an error.
+
+**A driver** implements `Panel` on a small value sharing state with the driver, and `HasPanel` on the driver:
+
+```rust
+impl HasPanel for MyArm {
+    fn panel(&self) -> Arc<dyn Panel> {
+        Arc::new(MyPanel { shared: Arc::clone(&self.shared) })
+    }
+}
+```
+
+- A controller with a second channel (a dashboard port, a second fieldbus client) sends the stop there.
+- A driver whose motion is a loop in its own process shares a stop counter that the loop checks every cycle and returns `Err(RobotException::Stopped)` when it changes; `roplat_world::KinematicArm` is the reference.
+- A blocking vendor call that cannot be interrupted: `stop` answers `NotSupported` and the docs say so.
+- `stop_bound()` is what the device needs to end a motion and come to rest, including deceleration and the longest wait inside one cycle.
+- `status()` reads the device: a software emergency stop is one asked for through `emergency_stop`; the device's own button or safety circuit is `device_estop`, usually `Release::OnSite`; a stop the device made to protect itself is `protective_stop`.
+
+Run `conformance::check_panel(&mut robot, &check, joints, press)` in the driver's tests: it stops a motion from another thread and holds the driver to its bound, checks that an emergency stop holds until `clear` and that `enable` fails before it, and, when `press` can engage the device's own emergency stop, that `clear` answers `LocalResetRequired`.
+
+**A service** (MCP, web, console) takes `robot.panel()` before handing the robot to its motion thread, instead of a second `Robot` value for stopping. It decides who may use which recovery operation; the panel does not. To keep a record, wrap the panel once and hand out the wrapper:
+
+```rust
+let log = Arc::new(LoggedPanel::new(robot.panel()));
+let for_agent: Arc<dyn Panel> = log.clone();
+let mut news = log.subscribe();           // news.next(timeout) -> EventBatch
+let last_ten = log.recent(10);            // PanelEvent { seq, at, by, op, outcome, after }
+```
+
+`LoggedPanel` records each operation with its caller and answer, and a change of status that no operation through it explains as `Actor::Device` / `PanelOp::Changed`, noticed when the status is read through it. Events serialize with serde.
+
+New errors: `RobotException::Stopped` (a stop ended the motion or refused the call) and `RobotException::LocalResetRequired`. Code that matches `RobotException` exhaustively adds them.
+
 
 # Migrating from robot_behavior 0.8 to roplat_behavior 0.9
 

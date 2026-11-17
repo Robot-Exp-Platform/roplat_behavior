@@ -1,5 +1,9 @@
 //! The defaults that are not no-ops: an emergency stop that cannot latch, and
 //! async motion a driver does not have.
+//!
+//! `Robot::emergency_stop` and `Robot::stop` are deprecated since 0.10 in
+//! favour of the panel; their defaults stay as they were for one version.
+#![allow(deprecated, reason = "tests the deprecated defaults until they are removed")]
 
 use std::time::Duration;
 
