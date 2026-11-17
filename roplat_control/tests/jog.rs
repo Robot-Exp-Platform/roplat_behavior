@@ -46,16 +46,23 @@ fn jogs_need_the_deadman_and_stop_short_of_the_limits() {
     let mut control = joint_jog_control(|| next.take(), mapping, || false);
     let mut q = [0.0, 0.0];
     let mut peak: f64 = 0.0;
+    let (mut previous, mut drop): (f64, f64) = (0.0, 0.0);
     for k in 0..400 {
         if k % 5 == 0 {
             next.set(jog([0.0, 1.0], 1));
         }
         let (command, _) = control(at(q), period);
         peak = peak.max(command[1]);
+        drop = drop.max(previous - command[1]);
+        previous = command[1];
         q[1] += command[1] * period.as_secs_f64();
     }
     assert!((peak - 0.5).abs() < 1e-12, "peak {peak}");
     assert!(q[1] <= 0.9 + 1e-9 && q[1] > 0.88, "joint 1 at {}", q[1]);
+    // It brakes over many cycles, not at the margin: no cycle takes off
+    // much more than the 2 rad/s² × 10 ms the acceleration allows (the
+    // discrete braking curve takes up to about 1.9 of it near the end).
+    assert!(drop <= 3.0 * 2.0 * 0.01, "braked {drop} rad/s in one cycle");
 
     let next = Cell::new(jog([1.0, 1.0], 1));
     let mut control = joint_jog_control(|| next.take(), mapping, || false);
