@@ -3,9 +3,12 @@
 //!
 //! - [`frame_id`] derives a [`FrameId`] from a frame name at compile time, so
 //!   producers can fill `Header::frame` without holding a registry.
-//! - [`FrameTree`] fixes the topology and the static transforms when it is
-//!   built: URDF links and joints through [`FrameTreeBuilder::model`],
-//!   calibrated extrinsics through [`FrameTreeBuilder::fixed`].
+//! - [`FrameTree`] fixes the topology when it is built: URDF links and
+//!   joints through [`FrameTreeBuilder::model`], calibrated extrinsics
+//!   through [`FrameTreeBuilder::fixed`]. [`FrameTree::edges`] lists how
+//!   each frame is placed, and [`FrameTree::set_fixed`] (or
+//!   [`FrameBuffer::set_fixed`]) replaces a fixed edge's pose, as a new
+//!   calibration does.
 //! - [`FrameBuffer`] keeps a time history of joint positions and dynamic
 //!   transforms on one clock and answers [`FrameBuffer::lookup`] at a
 //!   [`Stamp`]. Writes and lookups do not allocate and never block.
@@ -18,6 +21,9 @@
 //!   describes, and rectifies raw images for the pinhole code above.
 //! - [`image`] crops and resizes 8-bit images and converts them between
 //!   RGB, grey, HSV, NV12, YUYV and raw Bayer mosaics.
+//! - [`so3`] is rotations as a Lie group: exponential, logarithm and the
+//!   left and right Jacobians with their inverses; [`twist`] moves twists
+//!   and wrenches between frames with a pose's adjoint.
 //! - [`uncertain`] carries poses and points with covariances through
 //!   composition, inversion and transformation, to first order.
 //! - Feature `roplat` adds [`roplat::JointStateNode`], which records joint
@@ -35,8 +41,10 @@ mod buffer;
 pub mod calibration;
 pub mod image;
 pub mod lens;
+pub mod so3;
 pub mod target;
 mod tree;
+pub mod twist;
 pub mod uncertain;
 
 #[cfg(feature = "roplat")]
@@ -46,7 +54,7 @@ pub mod scene;
 
 pub use buffer::FrameBuffer;
 pub use roplat_msgs::FrameId;
-pub use tree::{FrameTree, FrameTreeBuilder, History, JointGroup};
+pub use tree::{EdgeKind, FrameEdge, FrameTree, FrameTreeBuilder, History, JointGroup};
 
 /// The id of the frame named `name`: FNV-1a over its UTF-8 bytes, with `0`
 /// (unspecified) mapped to `1`.

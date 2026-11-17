@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use nalgebra::{Isometry3, Matrix3, Point3, Rotation3, Translation3, UnitQuaternion, Vector3};
 use roplat_frames::{
     calibration::{HandEye, HandEyeSample, calibrate_hand_eye},
-    target::{Chessboard, DetectOptions, detect_chessboard, target_pose},
+    target::{Chessboard, DetectOptions, TargetPoseError, detect_chessboard, target_pose},
 };
 use roplat_msgs::CameraInfo;
 
@@ -191,11 +191,32 @@ fn exact_points_give_the_exact_pose() {
     assert!((pose.pose.translation.vector - board_in_camera.translation.vector).norm() < 1e-9);
     assert!(pose.pose.rotation.angle_to(&board_in_camera.rotation) < 1e-9);
     assert!(pose.rms < 1e-6);
-    // Too few points, or points off the plane.
-    assert!(target_pose(&pixels[..3], &corners[..3], &info()).is_none());
+    // Too few points, points off the plane, lists that do not pair up, a
+    // camera the lens module refuses, points all in one place.
+    assert_eq!(
+        target_pose(&pixels[..3], &corners[..3], &info()),
+        Err(TargetPoseError::TooFewPoints(3))
+    );
     let mut lifted = corners.clone();
-    lifted[0][2] = 0.01;
-    assert!(target_pose(&pixels, &lifted, &info()).is_none());
+    lifted[5][2] = 0.01;
+    assert_eq!(
+        target_pose(&pixels, &lifted, &info()),
+        Err(TargetPoseError::OffPlane(5))
+    );
+    assert_eq!(
+        target_pose(&pixels[..10], &corners, &info()),
+        Err(TargetPoseError::Mismatch { pixels: 10, points: 54 })
+    );
+    let flat = CameraInfo { k: [0.0; 9], ..info() };
+    assert_eq!(
+        target_pose(&pixels, &corners, &flat),
+        Err(TargetPoseError::Camera)
+    );
+    let one_point = vec![[0.0, 0.0, 0.0]; 9];
+    assert_eq!(
+        target_pose(&pixels[..9], &one_point, &info()),
+        Err(TargetPoseError::Degenerate)
+    );
 }
 
 #[test]
@@ -260,4 +281,33 @@ fn images_calibrate_a_camera_on_the_flange() {
         "mount {turn} rad off: {calibration:?}"
     );
     assert!(calibration.translation_rms < 0.0005, "{calibration:?}");
+}
+
+/// A printed board, rendered by `Chessboard::render`, is found in order:
+/// inner corner (i, j) at 30 + 20 (i + 1) - 0.5 in both directions.
+#[test]
+fn a_rendered_board_is_found_in_its_order() {
+    let image = BOARD.render(20, 30).unwrap();
+    assert_eq!((image.width(), image.height(), image.channels()), (260, 200, 1));
+    // The top-left square is black, the margin white.
+    assert_eq!(image.pixel(35, 35), Some(&[0u8][..]));
+    assert_eq!(image.pixel(55, 35), Some(&[255u8][..]));
+    assert_eq!(image.pixel(5, 5), Some(&[255u8][..]));
+    let corners = detect_chessboard(
+        image.data(),
+        image.width(),
+        image.height(),
+        &BOARD,
+        &DetectOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(corners.len(), 54);
+    for (id, c) in corners.iter().enumerate() {
+        let (i, j) = ((id % 9) as f64, (id / 9) as f64);
+        let expected = [30.0 + 20.0 * (i + 1.0) - 0.5, 30.0 + 20.0 * (j + 1.0) - 0.5];
+        let off = (c[0] - expected[0]).hypot(c[1] - expected[1]);
+        assert!(off < 0.1, "corner {id} at {c:?}, not {expected:?}");
+    }
+    assert!(Chessboard { columns: 1, rows: 6, square: 0.025 }.render(20, 30).is_none());
+    assert!(BOARD.render(0, 30).is_none());
 }
