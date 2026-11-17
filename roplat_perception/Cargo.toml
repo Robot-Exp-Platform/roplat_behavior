@@ -12,6 +12,7 @@ keywords = ["robot", "robotics", "point-cloud", "perception", "roplat"]
 
 [dependencies]
 roplat_description = { version = "0.9.0", path = "../roplat_description" }
+roplat_msgs = "0.6.0-rc.1"
 nalgebra = "0.34.1"
 thiserror = "2.0.17"
 
