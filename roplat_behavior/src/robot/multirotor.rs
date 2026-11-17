@@ -220,9 +220,12 @@ pub trait Multirotor: Robot {
     /// failsafe rather than a hover.
     ///
     /// A setpoint that [`VelocitySetpoint::validate`] refuses is refused
-    /// with that error and never sent. The default, for a driver that
-    /// cannot send velocities, returns
-    /// [`NotSupported`](RobotException::NotSupported).
+    /// with that error and never sent. A device that takes only some of the
+    /// [`YawCommand`]s (a Crazyflie's world velocity setpoint carries a yaw
+    /// rate, not an angle) has its driver refuse the others with
+    /// [`NotSupported`](RobotException::NotSupported) and document which.
+    /// The default, for a driver that cannot send velocities at all, returns
+    /// `NotSupported` too.
     fn send_velocity(&mut self, setpoint: VelocitySetpoint) -> RobotResult<()> {
         let _ = setpoint;
         Err(RobotException::NotSupported { operation: "send_velocity" })
