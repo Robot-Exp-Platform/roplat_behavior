@@ -212,11 +212,18 @@ fn exact_points_give_the_exact_pose() {
         target_pose(&pixels, &corners, &flat),
         Err(TargetPoseError::Camera)
     );
+    // The board's first row: nine points on a line fit many poses.
+    assert_eq!(
+        target_pose(&pixels[..9], &corners[..9], &info()),
+        Err(TargetPoseError::Degenerate)
+    );
     let one_point = vec![[0.0, 0.0, 0.0]; 9];
     assert_eq!(
         target_pose(&pixels[..9], &one_point, &info()),
         Err(TargetPoseError::Degenerate)
     );
+    // Two rows are enough.
+    assert!(target_pose(&pixels[..18], &corners[..18], &info()).is_ok());
 }
 
 #[test]

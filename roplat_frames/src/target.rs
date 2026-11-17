@@ -174,8 +174,8 @@ pub enum TargetPoseError {
     /// Pixel `k` lies where no ray of the lens lands.
     #[error("pixel {0} is not seen through the lens")]
     NoRay(usize),
-    /// The points determine no pose: all on one line, or a target behind
-    /// the camera.
+    /// The points determine no pose: the target's points all on one line,
+    /// or a view from which no pose reprojects them.
     #[error("the points determine no pose")]
     Degenerate,
 }
@@ -202,6 +202,9 @@ pub fn target_pose(
     {
         return Err(TargetPoseError::OffPlane(k));
     }
+    if collinear(object) {
+        return Err(TargetPoseError::Degenerate);
+    }
     let lens = Lens::new(info).ok_or(TargetPoseError::Camera)?;
     let rays = pixels
         .iter()
@@ -219,6 +222,26 @@ pub fn target_pose(
     } else {
         Err(TargetPoseError::Degenerate)
     }
+}
+
+/// Whether the target's points lie on one line (or in one place), where a
+/// line of pixels fits a whole family of poses: the smaller spread of their
+/// 2 x 2 covariance is a negligible share of the larger.
+fn collinear(object: &[[f64; 3]]) -> bool {
+    let n = object.len() as f64;
+    let (mx, my) = object
+        .iter()
+        .fold((0.0, 0.0), |(x, y), p| (x + p[0] / n, y + p[1] / n));
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for p in object {
+        let (dx, dy) = (p[0] - mx, p[1] - my);
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+    }
+    let trace = sxx + syy;
+    // The eigenvalues' product against the larger one squared.
+    trace.is_nan() || trace <= 0.0 || sxx * syy - sxy * sxy <= 1e-12 * trace * trace
 }
 
 /// An 8-bit image as floats, read with clamping at the border.
