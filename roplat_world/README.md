@@ -13,6 +13,7 @@ Part of the [roplat_behavior workspace](../README.md). 0.9 is not on crates.io y
 - World entities: `Entity`, `AddRobot`, `AddCollision`, `AddVisual`.
 - The shared asset directory (`assets_dir`).
 - `SimulationRhythm`, which steps an engine as a roplat rhythm (feature `roplat`).
+- `KinematicArm`, a simulated arm without dynamics whose `Panel` stops a motion from another thread, with `Hardware` playing its emergency-stop button and protective stop. It is the reference implementation of the panel contract and passes `roplat_behavior::conformance::check_panel`.
 
 A robot type declares its model files through `roplat_behavior::RobotDescription`; this crate chooses among them for a backend.
 

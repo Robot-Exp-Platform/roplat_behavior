@@ -13,6 +13,7 @@
 - 世界实体：`Entity`、`AddRobot`、`AddCollision`、`AddVisual`。
 - 共享资产目录（`assets_dir`）。
 - `SimulationRhythm`，把引擎作为 roplat 节律步进（feature `roplat`）。
+- `KinematicArm`：无动力学的仿真臂，它的 `Panel` 能从另一个线程停止运动，`Hardware` 扮演它的急停按钮与保护停止。它是面板契约的参照实现，通过 `roplat_behavior::conformance::check_panel`。
 
 机器人类型通过 `roplat_behavior::RobotDescription` 声明自己的模型文件，本包为后端从中选择。
 
