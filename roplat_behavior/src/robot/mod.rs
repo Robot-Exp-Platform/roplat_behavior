@@ -15,6 +15,12 @@ pub mod spaces;
 pub mod state;
 pub mod types;
 
+// roplat_behavior 0.10: the batch-20 contract additions (vehicles, battery,
+// segmentation).
+pub mod battery;
+pub mod car;
+pub mod segmentation;
+
 pub use arm::{Arm, ArmState};
 pub use async_control::{AsyncControl, AsyncControlCallback, AsyncControlWith};
 pub use category::{Humanoid, MobileBase, Quadruped, VelocityControlledBase};
@@ -38,6 +44,11 @@ pub use model::{
 };
 pub use motion::{Motion, MotionFile, MoveTo, MoveTraj, Space};
 pub use multirotor::{LandedState, Multirotor, MultirotorState, PositionSetpoint};
+pub use multirotor::{VelocitySetpoint, YawCommand};
+
+pub use battery::{Battery, BatteryFaults, BatteryReading, BatteryStatus};
+pub use car::{CarGeometry, CarLike, SteerCommand};
+pub use segmentation::{LabelClass, LabelImage};
 pub use observe::{ControlObservation, ControlObserver};
 pub use roplat_msgs::{CartesianLimits, JointLimits, LoadState};
 pub use spaces::{

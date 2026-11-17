@@ -48,6 +48,12 @@ pub mod behavior {
     };
 
     pub use crate::simulation::{ModelFormat, SimulationModel};
+
+    // roplat_behavior 0.10: the batch-20 contract additions.
+    pub use crate::robot::{
+        Battery, BatteryFaults, BatteryReading, BatteryStatus, CarGeometry, CarLike, LabelClass,
+        LabelImage, SteerCommand, VelocitySetpoint, YawCommand,
+    };
 }
 
 pub mod driver {

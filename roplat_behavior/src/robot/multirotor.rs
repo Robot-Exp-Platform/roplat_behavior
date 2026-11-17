@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use roplat_msgs::{Quaternion, Stamped, Vector3};
 
-use crate::{Robot, RobotResult};
+use crate::{Robot, RobotException, RobotResult};
 
 /// What the flight controller reports about ground contact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -65,6 +65,77 @@ impl PositionSetpoint {
     }
 }
 
+/// What a [`VelocitySetpoint`] does with the vehicle's heading.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum YawCommand {
+    /// Keep the heading the vehicle has when the setpoint arrives.
+    #[default]
+    Hold,
+    /// Turn to this yaw and keep it: radians counter-clockwise about world
+    /// +Z from world +X, as [`PositionSetpoint::yaw`].
+    Angle(f64),
+    /// Turn at this rate: rad/s counter-clockwise about world +Z, so a
+    /// positive rate turns left.
+    Rate(f64),
+}
+
+/// A velocity to fly at for a while, in the world frame of [`Multirotor`].
+///
+/// ```
+/// use std::time::Duration;
+///
+/// use roplat_behavior::{Vector3, VelocitySetpoint, YawCommand};
+///
+/// // East at 1.5 m/s and south at 1 m/s for 3 s, holding the heading.
+/// let setpoint = VelocitySetpoint {
+///     velocity: Vector3::new(1.5, -1.0, 0.0),
+///     yaw: YawCommand::Hold,
+///     duration: Duration::from_secs(3),
+/// };
+/// assert!(setpoint.validate().is_ok());
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VelocitySetpoint {
+    /// m/s along world east, north and up: the axes of
+    /// [`PositionSetpoint::position`], not the body's.
+    pub velocity: Vector3,
+    pub yaw: YawCommand,
+    /// How long the setpoint holds without another one; see
+    /// [`Multirotor::send_velocity`]. Not zero.
+    pub duration: Duration,
+}
+
+impl VelocitySetpoint {
+    /// `Ok` for a setpoint a driver may send:
+    /// [`InvalidInstruction`](RobotException::InvalidInstruction) for a
+    /// velocity, yaw or yaw rate that is not finite, and for a zero
+    /// duration. A driver calls it before sending, so that a bad setpoint
+    /// never reaches the vehicle.
+    pub fn validate(&self) -> RobotResult<()> {
+        let v = self.velocity;
+        if ![v.x, v.y, v.z].iter().all(|c| c.is_finite()) {
+            return Err(RobotException::InvalidInstruction(format!(
+                "velocity setpoint {:?} is not finite",
+                [v.x, v.y, v.z]
+            )));
+        }
+        if let YawCommand::Angle(yaw) | YawCommand::Rate(yaw) = self.yaw
+            && !yaw.is_finite()
+        {
+            return Err(RobotException::InvalidInstruction(format!(
+                "velocity setpoint yaw {:?} is not finite",
+                self.yaw
+            )));
+        }
+        if self.duration.is_zero() {
+            return Err(RobotException::InvalidInstruction(
+                "velocity setpoint has a zero duration".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// A multirotor flown through position setpoints.
 ///
 /// # Frames
@@ -109,6 +180,9 @@ impl PositionSetpoint {
 /// streaming its own must send at least as often as the device requires
 /// (PX4 offboard faster than 2 Hz, a Crazyflie within 0.5 s), or the device
 /// falls back to its failsafe.
+///
+/// [`send_velocity`](Self::send_velocity) sends one velocity setpoint, in
+/// the same world frame and yaw convention as position setpoints.
 pub trait Multirotor: Robot {
     /// Blocks for the next position estimate.
     fn read_flight_state(&mut self) -> RobotResult<Stamped<MultirotorState>>;
@@ -130,4 +204,27 @@ pub trait Multirotor: Robot {
     /// Lands where the vehicle is; returns once it is on the ground with its
     /// motors stopped.
     fn land(&mut self) -> RobotResult<()>;
+
+    /// Sends one velocity setpoint and returns.
+    ///
+    /// The vehicle flies at `setpoint.velocity` (world frame, m/s) and
+    /// treats its heading as `setpoint.yaw` says until the next setpoint,
+    /// velocity or position, replaces this one, or until
+    /// `setpoint.duration` has passed since the driver sent it. Then it
+    /// brakes and holds where it is, as a device that runs a setpoint for a
+    /// duration does by itself (AirSim's `moveByVelocity` followed by its
+    /// hover). A device that drops setpoints sooner on its own, such as PX4
+    /// in offboard mode, needs them streamed as
+    /// [`send_setpoint`](Self::send_setpoint) does, and its driver
+    /// documents what the device does when they stop: that may be its
+    /// failsafe rather than a hover.
+    ///
+    /// A setpoint that [`VelocitySetpoint::validate`] refuses is refused
+    /// with that error and never sent. The default, for a driver that
+    /// cannot send velocities, returns
+    /// [`NotSupported`](RobotException::NotSupported).
+    fn send_velocity(&mut self, setpoint: VelocitySetpoint) -> RobotResult<()> {
+        let _ = setpoint;
+        Err(RobotException::NotSupported { operation: "send_velocity" })
+    }
 }
