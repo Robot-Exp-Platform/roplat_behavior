@@ -10,8 +10,7 @@ use std::{
 };
 
 use roplat_behavior::{
-    Actor, LoggedPanel, Outcome, Panel, PanelOp, PanelStatus, Release, RobotException,
-    RobotResult,
+    Actor, LoggedPanel, Outcome, Panel, PanelOp, PanelStatus, Release, RobotException, RobotResult,
     msgs::{ManualClock, clock},
 };
 
@@ -135,18 +134,26 @@ fn every_operation_is_recorded_with_its_caller_and_answer() {
     log.stop(&agent()).unwrap();
     log.emergency_stop(&operator()).unwrap();
     let refused = log.enable(&agent());
-    assert!(matches!(refused, Err(RobotException::Stopped)), "{refused:?}");
+    assert!(
+        matches!(refused, Err(RobotException::Stopped)),
+        "{refused:?}"
+    );
     let refused = log.pause(&agent());
     assert!(
-        matches!(refused, Err(RobotException::NotSupported { operation: "pause" })),
+        matches!(
+            refused,
+            Err(RobotException::NotSupported { operation: "pause" })
+        ),
         "the caller gets the panel's own error: {refused:?}"
     );
     let cleared = log.clear(&agent()).unwrap();
     assert!(cleared.ready(), "{cleared:?}");
 
     let events = log.recent(10);
-    let seen: Vec<(u64, Actor, PanelOp, Outcome)> =
-        events.iter().map(|e| (e.seq, e.by.clone(), e.op, e.outcome.clone())).collect();
+    let seen: Vec<(u64, Actor, PanelOp, Outcome)> = events
+        .iter()
+        .map(|e| (e.seq, e.by.clone(), e.op, e.outcome.clone()))
+        .collect();
     assert_eq!(
         seen,
         [
@@ -161,7 +168,10 @@ fn every_operation_is_recorded_with_its_caller_and_answer() {
     assert!(events[4].after.is_some_and(|s| s.ready()));
     assert!(events.windows(2).all(|w| w[0].at.nanos <= w[1].at.nanos));
     assert!(events.iter().all(|e| e.at.clock == clock::REALTIME));
-    assert_eq!(log.recent(2).iter().map(|e| e.seq).collect::<Vec<_>>(), [3, 4]);
+    assert_eq!(
+        log.recent(2).iter().map(|e| e.seq).collect::<Vec<_>>(),
+        [3, 4]
+    );
 }
 
 #[test]
@@ -187,13 +197,23 @@ fn a_change_nobody_asked_for_is_the_devices() {
 
     // A change an operation through the log made is that operation's.
     let refused = log.clear(&agent());
-    assert!(matches!(refused, Err(RobotException::LocalResetRequired)), "{refused:?}");
+    assert!(
+        matches!(refused, Err(RobotException::LocalResetRequired)),
+        "{refused:?}"
+    );
     fake.set(|status| status.device_estop = None);
     log.status().unwrap();
     log.enable(&agent()).unwrap();
     log.status().unwrap();
-    let ops: Vec<(Actor, PanelOp)> = log.recent(10).iter().map(|e| (e.by.clone(), e.op)).collect();
-    let after_button = PanelStatus { device_estop: Some(Release::OnSite), ..PanelStatus::default() };
+    let ops: Vec<(Actor, PanelOp)> = log
+        .recent(10)
+        .iter()
+        .map(|e| (e.by.clone(), e.op))
+        .collect();
+    let after_button = PanelStatus {
+        device_estop: Some(Release::OnSite),
+        ..PanelStatus::default()
+    };
     assert_eq!(
         ops,
         [
@@ -225,7 +245,10 @@ fn a_status_read_overlapping_an_operation_is_not_the_devices() {
     log.emergency_stop(&operator()).unwrap();
     open.send(()).unwrap();
     let stale = reader.join().unwrap();
-    assert!(!stale.software_estop, "the reader saw the status before the stop");
+    assert!(
+        !stale.software_estop,
+        "the reader saw the status before the stop"
+    );
 
     let ops: Vec<PanelOp> = log.recent(10).iter().map(|e| e.op).collect();
     assert_eq!(ops, [PanelOp::EmergencyStop]);
@@ -270,7 +293,10 @@ fn a_subscriber_that_falls_behind_is_told_what_it_missed() {
     }
     let batch = news.next(Duration::ZERO);
     assert_eq!(batch.missed, 3);
-    assert_eq!(batch.events.iter().map(|e| e.seq).collect::<Vec<_>>(), [3, 4]);
+    assert_eq!(
+        batch.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+        [3, 4]
+    );
     assert_eq!(log.recent(10).len(), 2);
     log.stop(&agent()).unwrap();
     let batch = news.next(Duration::ZERO);

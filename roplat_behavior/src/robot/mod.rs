@@ -183,7 +183,10 @@ pub trait Robot {
         note = "use `Panel::emergency_stop` on the device's panel (`HasPanel::panel`), which works while a motion runs"
     )]
     fn emergency_stop(&mut self) -> RobotResult<()> {
-        #[allow(deprecated, reason = "the deprecated default keeps its 0.9 behavior for one version")]
+        #[allow(
+            deprecated,
+            reason = "the deprecated default keeps its 0.9 behavior for one version"
+        )]
         let stopped = self.stop();
         stopped?;
         Err(RobotException::NoEmergencyStop)

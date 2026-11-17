@@ -3,7 +3,10 @@
 //!
 //! `Robot::emergency_stop` and `Robot::stop` are deprecated since 0.10 in
 //! favour of the panel; their defaults stay as they were for one version.
-#![allow(deprecated, reason = "tests the deprecated defaults until they are removed")]
+#![allow(
+    deprecated,
+    reason = "tests the deprecated defaults until they are removed"
+)]
 
 use std::time::Duration;
 

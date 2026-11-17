@@ -69,7 +69,9 @@ impl<const N: usize> DeviceState<N> {
 impl<const N: usize> Device<N> {
     fn lock(&self) -> MutexGuard<'_, DeviceState<N>> {
         // The state is a handful of plain values, valid after any panic.
-        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Changes the state and wakes a waiting motion.
@@ -126,7 +128,9 @@ impl<M, const N: usize> Robot for KinematicArm<M, N> {
 
     /// Measured positions only; the arm has no velocity or effort sensing.
     fn read_state(&mut self) -> RobotResult<JointState<N>> {
-        Ok(StateView::from_meas(JointSample::EMPTY.with_q(self.joints())))
+        Ok(StateView::from_meas(
+            JointSample::EMPTY.with_q(self.joints()),
+        ))
     }
 }
 
@@ -182,7 +186,11 @@ impl<M: Joints<N>, const N: usize> MoveTo<JointSpace<N>> for KinematicArm<M, N> 
                     return Ok(());
                 }
             }
-            state = match self.device.changed.wait_timeout(state, Self::CONTROL_PERIOD) {
+            state = match self
+                .device
+                .changed
+                .wait_timeout(state, Self::CONTROL_PERIOD)
+            {
                 Ok((state, _)) => state,
                 Err(poisoned) => poisoned.into_inner().0,
             };

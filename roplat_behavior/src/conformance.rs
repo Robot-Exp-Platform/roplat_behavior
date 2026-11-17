@@ -39,9 +39,7 @@ use crate::{
 // The panel check (0.10).
 use std::time::Instant;
 
-use crate::{
-    Actor, HasPanel, JointSpace, MoveTo, Panel, Release, RobotResult,
-};
+use crate::{Actor, HasPanel, JointSpace, MoveTo, Panel, Release, RobotResult};
 
 /// A broken contract promise.
 #[derive(Debug)]
@@ -1109,7 +1107,9 @@ where
             ),
         ));
     }
-    let status = panel.status().map_err(|e| device("panel: stop latched", e))?;
+    let status = panel
+        .status()
+        .map_err(|e| device("panel: stop latched", e))?;
     if !status.ready() {
         return Err(violation(
             "panel: stop latched",
@@ -1126,7 +1126,9 @@ where
         Err(e) => return Err(device("panel: emergency stop", e)),
     };
     if latched {
-        let status = panel.status().map_err(|e| device("panel: software estop", e))?;
+        let status = panel
+            .status()
+            .map_err(|e| device("panel: software estop", e))?;
         if !status.software_estop {
             return Err(violation(
                 "panel: software estop",
@@ -1169,13 +1171,13 @@ where
     // 3. The device's own emergency stop needs a reset at the device.
     let on_site = press(true);
     if on_site {
-        let status = panel.status().map_err(|e| device("panel: device estop", e))?;
+        let status = panel
+            .status()
+            .map_err(|e| device("panel: device estop", e))?;
         if status.device_estop != Some(Release::OnSite) {
             return Err(violation(
                 "panel: device estop",
-                format!(
-                    "the device's own emergency stop is engaged, but the status is {status:?}"
-                ),
+                format!("the device's own emergency stop is engaged, but the status is {status:?}"),
             ));
         }
         let cleared = panel.clear(&by);
@@ -1195,7 +1197,9 @@ where
             ));
         }
         press(false);
-        let cleared = panel.clear(&by).map_err(|e| device("panel: after reset", e))?;
+        let cleared = panel
+            .clear(&by)
+            .map_err(|e| device("panel: after reset", e))?;
         if cleared.held() {
             return Err(violation(
                 "panel: after reset",
@@ -1210,7 +1214,10 @@ where
 
 /// The largest difference between two joint vectors.
 fn distance<const N: usize>(a: &[f64; N], b: &[f64; N]) -> f64 {
-    a.iter().zip(b).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max)
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0, f64::max)
 }
 
 /// `enable` (or `NotSupported`), after which the status must be ready.
@@ -1221,7 +1228,10 @@ fn ready_again(panel: &dyn Panel, by: &Actor, check: &'static str) -> Result<(),
     }
     let status = panel.status().map_err(|e| device(check, e))?;
     if !status.ready() {
-        return Err(violation(check, format!("the device is not ready again: {status:?}")));
+        return Err(violation(
+            check,
+            format!("the device is not ready again: {status:?}"),
+        ));
     }
     Ok(())
 }

@@ -25,7 +25,9 @@ pub enum PanelOp {
     /// The status changed without an operation through this log: the device
     /// did it, or something that bypassed the log (another panel, the
     /// device's own pendant). Recorded with [`Actor::Device`].
-    Changed { before: PanelStatus },
+    Changed {
+        before: PanelStatus,
+    },
 }
 
 /// What the panel answered, as the log keeps it: the answers the panel
@@ -38,7 +40,9 @@ pub enum Outcome {
     Stopped,
     LocalResetRequired,
     /// Another error, e.g. a lost connection.
-    Failed { error: String },
+    Failed {
+        error: String,
+    },
 }
 
 impl From<&RobotException> for Outcome {
@@ -103,18 +107,28 @@ impl Log {
     fn lock(&self) -> MutexGuard<'_, LogState> {
         // A panic elsewhere while holding this lock leaves a record behind,
         // nothing half-done; keep recording.
-        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
 impl LogState {
-    fn push(&mut self, at: Stamp, by: Actor, op: PanelOp, outcome: Outcome, after: Option<PanelStatus>) {
+    fn push(
+        &mut self,
+        at: Stamp,
+        by: Actor,
+        op: PanelOp,
+        outcome: Outcome,
+        after: Option<PanelStatus>,
+    ) {
         if self.events.len() == self.capacity {
             self.events.pop_front();
         }
         let seq = self.next_seq;
         self.next_seq += 1;
-        self.events.push_back(PanelEvent { seq, at, by, op, outcome, after });
+        self.events
+            .push_back(PanelEvent { seq, at, by, op, outcome, after });
     }
 }
 
@@ -198,7 +212,12 @@ impl<C: Clock> LoggedPanel<C> {
         PanelSubscription { log: Arc::clone(&self.log), next }
     }
 
-    fn record<T>(&self, by: &Actor, op: PanelOp, call: impl FnOnce(&dyn Panel) -> RobotResult<T>) -> RobotResult<T> {
+    fn record<T>(
+        &self,
+        by: &Actor,
+        op: PanelOp,
+        call: impl FnOnce(&dyn Panel) -> RobotResult<T>,
+    ) -> RobotResult<T> {
         {
             let mut state = self.log.lock();
             state.started += 1;
@@ -268,7 +287,13 @@ impl<C: Clock + 'static> Panel for LoggedPanel<C> {
         if let Some(before) = state.last.replace(status)
             && before != status
         {
-            state.push(at, Actor::Device, PanelOp::Changed { before }, Outcome::Done, Some(status));
+            state.push(
+                at,
+                Actor::Device,
+                PanelOp::Changed { before },
+                Outcome::Done,
+                Some(status),
+            );
             drop(state);
             self.log.grew.notify_all();
         }
@@ -307,9 +332,17 @@ impl PanelSubscription {
                 Err(poisoned) => poisoned.into_inner().0,
             };
         }
-        let oldest = state.events.front().map_or(state.next_seq, |event| event.seq);
+        let oldest = state
+            .events
+            .front()
+            .map_or(state.next_seq, |event| event.seq);
         let missed = oldest.saturating_sub(self.next);
-        let events = state.events.iter().filter(|event| event.seq >= self.next).cloned().collect();
+        let events = state
+            .events
+            .iter()
+            .filter(|event| event.seq >= self.next)
+            .cloned()
+            .collect();
         self.next = state.next_seq;
         EventBatch { missed, events }
     }

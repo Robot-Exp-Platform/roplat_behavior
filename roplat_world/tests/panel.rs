@@ -54,7 +54,10 @@ fn the_kinematic_arm_passes_check_panel() {
     assert!(report.latched, "{report:?}");
     assert!(report.on_site, "{report:?}");
     assert!(report.stop_latency <= report.bound, "{report:?}");
-    println!("stop latency {:?} of {:?}", report.stop_latency, report.bound);
+    println!(
+        "stop latency {:?} of {:?}",
+        report.stop_latency, report.bound
+    );
 }
 
 #[test]
@@ -102,7 +105,10 @@ fn disable_ends_the_motion_and_enable_is_needed_again() {
     assert!(matches!(result, Err(RobotException::Stopped)), "{result:?}");
     assert!(!panel.status().unwrap().enabled);
     let refused = arm.move_to([0.0; 3]);
-    assert!(matches!(refused, Err(RobotException::Stopped)), "{refused:?}");
+    assert!(
+        matches!(refused, Err(RobotException::Stopped)),
+        "{refused:?}"
+    );
     panel.enable(&by).unwrap();
     arm.move_to([0.0; 3]).unwrap();
 }
@@ -117,7 +123,10 @@ fn a_protective_stop_ends_the_motion_and_clear_releases_it() {
     hardware.protective_stop();
     let (mut arm, result) = motion.join().unwrap();
     assert!(matches!(result, Err(RobotException::Stopped)), "{result:?}");
-    assert_eq!(panel.status().unwrap().protective_stop, Some(Release::Clear));
+    assert_eq!(
+        panel.status().unwrap().protective_stop,
+        Some(Release::Clear)
+    );
     let cleared = panel.clear(&Actor::Agent("planner".into())).unwrap();
     assert!(cleared.ready(), "{cleared:?}");
     arm.move_to([0.0; 3]).unwrap();
@@ -137,7 +146,9 @@ fn a_logged_panel_tells_the_agent_who_stopped_it() {
 
     let motion = move_on_thread(arm, [1.0, 0.0, 0.0]);
     thread::sleep(Duration::from_millis(100));
-    operator.emergency_stop(&Actor::Operator("web".into())).unwrap();
+    operator
+        .emergency_stop(&Actor::Operator("web".into()))
+        .unwrap();
     let (mut arm, result) = motion.join().unwrap();
     assert!(matches!(result, Err(RobotException::Stopped)), "{result:?}");
 
@@ -160,10 +171,16 @@ fn a_logged_panel_tells_the_agent_who_stopped_it() {
     let status = agent.status().unwrap();
     assert_eq!(status.device_estop, Some(Release::OnSite));
     let refused = agent.clear(&by);
-    assert!(matches!(refused, Err(RobotException::LocalResetRequired)), "{refused:?}");
+    assert!(
+        matches!(refused, Err(RobotException::LocalResetRequired)),
+        "{refused:?}"
+    );
     let batch = news.next(Duration::from_secs(1));
-    let ops: Vec<(Actor, PanelOp, Outcome)> =
-        batch.events.iter().map(|e| (e.by.clone(), e.op, e.outcome.clone())).collect();
+    let ops: Vec<(Actor, PanelOp, Outcome)> = batch
+        .events
+        .iter()
+        .map(|e| (e.by.clone(), e.op, e.outcome.clone()))
+        .collect();
     let before = PanelStatus { enabled: true, ..PanelStatus::default() };
     assert_eq!(
         ops,
@@ -207,11 +224,21 @@ fn check_panel_passes_through_a_logged_panel() {
     let hardware = arm.hardware();
     let log = Arc::new(LoggedPanel::new(arm.panel()));
     let mut logged = Logged { arm, log: Arc::clone(&log) };
-    check_panel(&mut logged, &CHECK, |l| Ok(l.arm.joints()), press(&hardware)).unwrap();
+    check_panel(
+        &mut logged,
+        &CHECK,
+        |l| Ok(l.arm.joints()),
+        press(&hardware),
+    )
+    .unwrap();
     let ops: Vec<PanelOp> = log.recent(100).iter().map(|e| e.op).collect();
     assert!(ops.contains(&PanelOp::Stop), "{ops:?}");
     assert!(ops.contains(&PanelOp::EmergencyStop), "{ops:?}");
-    assert!(log.recent(100).iter().all(|e| e.by != Actor::Device || matches!(e.op, PanelOp::Changed { .. })));
+    assert!(
+        log.recent(100)
+            .iter()
+            .all(|e| e.by != Actor::Device || matches!(e.op, PanelOp::Changed { .. }))
+    );
 }
 
 // Broken panels around the same arm: check_panel must name each defect.
@@ -315,8 +342,12 @@ fn check_faulty(defect: Defect) -> Violation {
     let hardware = arm.hardware();
     let mut faulty = Faulty { arm, defect };
     let started = Instant::now();
-    let result =
-        check_panel(&mut faulty, &CHECK, |f| Ok(f.arm.joints()), press(&hardware));
+    let result = check_panel(
+        &mut faulty,
+        &CHECK,
+        |f| Ok(f.arm.joints()),
+        press(&hardware),
+    );
     assert!(started.elapsed() < Duration::from_secs(10));
     result.expect_err("check_panel passed a broken panel")
 }
