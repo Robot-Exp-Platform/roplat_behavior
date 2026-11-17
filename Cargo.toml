@@ -23,3 +23,10 @@ roplat_msgs = { path = "../roplat/roplat_msgs" }
 # Only the dev profile; release builds are optimised anyway.
 [profile.dev.package.parry3d-f64]
 opt-level = 2
+
+# roplat_scene measures every pair its configuration checks look at with
+# its own GJK lower bound, which is slow unoptimised; the same line is in
+# roplat_protocols, where it takes roplat_chomp's Panda test from 18 s to
+# 7.5 s. Only the dev profile, as above.
+[profile.dev.package.roplat_scene]
+opt-level = 2
