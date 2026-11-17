@@ -17,9 +17,9 @@
 //!   `p1, p2`, with `d = [k1, k2, p1, p2, k3]`. ROS and OpenCV define
 //!   plumb_bob with these five only, so a camera with any of `d[5..8]` set
 //!   is refused rather than read as a rational polynomial.
-//! - `RATIONAL_POLYNOMIAL`: radial `(1 + k1 r² + k2 r⁴ + k3 r⁶) / (1 + k4 r²
-//!   + k5 r⁴ + k6 r⁶)` and the same tangential terms, with `d = [k1, k2,
-//!   p1, p2, k3, k4, k5, k6]`.
+//! - `RATIONAL_POLYNOMIAL`: the same tangential terms and the radial
+//!   factor `(1 + k1 r² + k2 r⁴ + k3 r⁶) / (1 + k4 r² + k5 r⁴ + k6 r⁶)`,
+//!   with `d = [k1, k2, p1, p2, k3, k4, k5, k6]`.
 //! - `EQUIDISTANT` (fisheye, as OpenCV's `fisheye` module): the angle `θ`
 //!   off the axis maps to `θ (1 + k1 θ² + k2 θ⁴ + k3 θ⁶ + k4 θ⁸)`, with
 //!   `d = [k1, k2, k3, k4]`; a camera with any of `d[4..8]` set is refused.
@@ -586,12 +586,12 @@ mod tests {
     #[test]
     fn rectifying_onto_another_camera_matrix_and_size() {
         let info = lenses()[1];
-        // Half the focal length and half the size: the whole raw view, and
-        // more, in a quarter of the pixels.
+        // A third of the focal length at half the size: the whole raw view,
+        // and more, in a quarter of the pixels.
         let half = CameraInfo {
             width: 320,
             height: 240,
-            k: [300.0, 0.0, 159.5, 0.0, 305.0, 119.5, 0.0, 0.0, 1.0],
+            k: [200.0, 0.0, 159.5, 0.0, 200.0, 119.5, 0.0, 0.0, 1.0],
             ..rectified(&info)
         };
         let map = Rectify::onto(&info, &half).unwrap();
