@@ -40,7 +40,7 @@ fn joints(arm: &mut Arm) -> RobotResult<[f64; 3]> {
 
 /// The button, as `check_panel` presses it.
 fn press(hardware: &Hardware<3>) -> impl FnMut(bool) -> bool + '_ {
-    |pressed| {
+    move |pressed| {
         hardware.estop_button(pressed);
         true
     }
@@ -71,7 +71,7 @@ fn without_a_button_the_on_site_part_is_skipped() {
 /// with the result.
 fn move_on_thread(mut arm: Arm, target: [f64; 3]) -> thread::JoinHandle<(Arm, RobotResult<()>)> {
     thread::spawn(move || {
-        let result = arm.move_to(target);
+        let result = MoveTo::<JointSpace<3>>::move_to(&mut arm, target);
         (arm, result)
     })
 }
@@ -104,13 +104,13 @@ fn disable_ends_the_motion_and_enable_is_needed_again() {
     let (mut arm, result) = motion.join().unwrap();
     assert!(matches!(result, Err(RobotException::Stopped)), "{result:?}");
     assert!(!panel.status().unwrap().enabled);
-    let refused = arm.move_to([0.0; 3]);
+    let refused = MoveTo::<JointSpace<3>>::move_to(&mut arm, [0.0; 3]);
     assert!(
         matches!(refused, Err(RobotException::Stopped)),
         "{refused:?}"
     );
     panel.enable(&by).unwrap();
-    arm.move_to([0.0; 3]).unwrap();
+    MoveTo::<JointSpace<3>>::move_to(&mut arm, [0.0; 3]).unwrap();
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn a_protective_stop_ends_the_motion_and_clear_releases_it() {
     );
     let cleared = panel.clear(&Actor::Agent("planner".into())).unwrap();
     assert!(cleared.ready(), "{cleared:?}");
-    arm.move_to([0.0; 3]).unwrap();
+    MoveTo::<JointSpace<3>>::move_to(&mut arm, [0.0; 3]).unwrap();
 }
 
 // A service's view: the operator stops the agent's motion through a logged
@@ -164,7 +164,7 @@ fn a_logged_panel_tells_the_agent_who_stopped_it() {
     // The agent clears the operator's software stop and goes on.
     let by = Actor::Agent("planner".into());
     agent.clear(&by).unwrap();
-    arm.move_to([0.0; 3]).unwrap();
+    MoveTo::<JointSpace<3>>::move_to(&mut arm, [0.0; 3]).unwrap();
 
     // The button is pressed at the device: nobody called the panel.
     hardware.estop_button(true);
@@ -211,7 +211,7 @@ fn check_panel_passes_through_a_logged_panel() {
     }
     impl MoveTo<JointSpace<3>> for Logged {
         fn move_to(&mut self, target: [f64; 3]) -> RobotResult<()> {
-            self.arm.move_to(target)
+            MoveTo::<JointSpace<3>>::move_to(&mut self.arm, target)
         }
     }
     impl HasPanel for Logged {
@@ -324,7 +324,7 @@ impl Robot for Faulty {
 
 impl MoveTo<JointSpace<3>> for Faulty {
     fn move_to(&mut self, target: [f64; 3]) -> RobotResult<()> {
-        match (self.defect, self.arm.move_to(target)) {
+        match (self.defect, MoveTo::<JointSpace<3>>::move_to(&mut self.arm, target)) {
             (Defect::StoppedIsOk, Err(RobotException::Stopped)) => Ok(()),
             (_, result) => result,
         }
