@@ -324,7 +324,10 @@ impl Robot for Faulty {
 
 impl MoveTo<JointSpace<3>> for Faulty {
     fn move_to(&mut self, target: [f64; 3]) -> RobotResult<()> {
-        match (self.defect, MoveTo::<JointSpace<3>>::move_to(&mut self.arm, target)) {
+        match (
+            self.defect,
+            MoveTo::<JointSpace<3>>::move_to(&mut self.arm, target),
+        ) {
             (Defect::StoppedIsOk, Err(RobotException::Stopped)) => Ok(()),
             (_, result) => result,
         }
