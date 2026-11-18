@@ -12,6 +12,7 @@ use std::{
 use roplat_behavior::{
     Actor, LoggedPanel, Outcome, Panel, PanelOp, PanelStatus, Release, RobotException, RobotResult,
     msgs::{ManualClock, clock},
+    note_no_effect,
 };
 
 /// A panel whose status the test sets directly, as the device would.
@@ -99,16 +100,157 @@ fn a_panel_is_a_trait_object() {
 fn optional_operations_are_not_supported_by_default() {
     let panel = Fake::new();
     let by = agent();
-    for (operation, result) in [
-        ("pause", panel.pause(&by)),
-        ("resume", panel.resume(&by)),
-        ("disable", panel.disable(&by)),
-    ] {
+    for (operation, result) in [("pause", panel.pause(&by)), ("resume", panel.resume(&by))] {
         assert!(
             matches!(result, Err(RobotException::NotSupported { operation: o }) if o == operation),
             "{operation}: {result:?}"
         );
     }
+}
+
+/// Only what a panel must write; every default stays.
+struct Bare;
+
+impl Panel for Bare {
+    fn stop(&self, _by: &Actor) -> RobotResult<()> {
+        Ok(())
+    }
+
+    fn emergency_stop(&self, _by: &Actor) -> RobotResult<()> {
+        Err(RobotException::NoEmergencyStop)
+    }
+
+    fn clear(&self, _by: &Actor) -> RobotResult<PanelStatus> {
+        self.status()
+    }
+
+    fn status(&self) -> RobotResult<PanelStatus> {
+        Ok(PanelStatus { enabled: true, ..PanelStatus::default() })
+    }
+
+    fn stop_bound(&self) -> Duration {
+        Duration::from_millis(10)
+    }
+}
+
+fn outcomes(log: &LoggedPanel) -> Vec<(PanelOp, Outcome)> {
+    log.recent(100)
+        .iter()
+        .map(|e| (e.op, e.outcome.clone()))
+        .collect()
+}
+
+#[test]
+fn the_default_enable_and_disable_answer_ok_and_say_they_did_nothing() {
+    // Called directly: `Ok`, as Robot's defaults (ruling 27).
+    Bare.enable(&agent()).unwrap();
+    Bare.disable(&agent()).unwrap();
+
+    let log = LoggedPanel::new(Arc::new(Bare));
+    log.enable(&agent()).unwrap();
+    log.disable(&operator()).unwrap();
+    log.stop(&agent()).unwrap();
+    assert_eq!(
+        outcomes(&log),
+        [
+            (PanelOp::Enable, Outcome::NoEffect),
+            (PanelOp::Disable, Outcome::NoEffect),
+            (PanelOp::Stop, Outcome::Done),
+        ]
+    );
+    let json = serde_json::to_string(&log.recent(3)[0]).unwrap();
+    assert!(json.contains("\"NoEffect\""), "{json}");
+
+    // Fake writes its own `enable`, which has an effect; its `disable` is
+    // the default.
+    let log = LoggedPanel::new(Fake::new());
+    log.enable(&agent()).unwrap();
+    log.disable(&agent()).unwrap();
+    assert_eq!(
+        outcomes(&log),
+        [
+            (PanelOp::Enable, Outcome::Done),
+            (PanelOp::Disable, Outcome::NoEffect)
+        ]
+    );
+}
+
+#[test]
+fn a_mark_left_from_before_does_not_reach_the_next_call() {
+    let log = LoggedPanel::new(Fake::new());
+    // A mark that no log cleared, e.g. from a panel called directly.
+    note_no_effect(PanelOp::Enable);
+    log.enable(&agent()).unwrap();
+    assert_eq!(outcomes(&log), [(PanelOp::Enable, Outcome::Done)]);
+}
+
+/// Waits inside `enable` until the test lets it go; the enable has an effect.
+struct Gated {
+    entered: Mutex<std::sync::mpsc::Sender<()>>,
+    go: Mutex<Receiver<()>>,
+}
+
+impl Panel for Gated {
+    fn stop(&self, _by: &Actor) -> RobotResult<()> {
+        Ok(())
+    }
+
+    fn emergency_stop(&self, _by: &Actor) -> RobotResult<()> {
+        Err(RobotException::NoEmergencyStop)
+    }
+
+    fn clear(&self, _by: &Actor) -> RobotResult<PanelStatus> {
+        self.status()
+    }
+
+    fn enable(&self, _by: &Actor) -> RobotResult<()> {
+        self.entered.lock().unwrap().send(()).unwrap();
+        self.go.lock().unwrap().recv().unwrap();
+        Ok(())
+    }
+
+    fn status(&self) -> RobotResult<PanelStatus> {
+        Ok(PanelStatus { enabled: true, ..PanelStatus::default() })
+    }
+
+    fn stop_bound(&self) -> Duration {
+        Duration::from_millis(10)
+    }
+}
+
+#[test]
+fn a_mark_on_another_thread_does_not_reach_this_call() {
+    let (entered_tx, entered) = channel();
+    let (go, go_rx) = channel();
+    let log = LoggedPanel::new(Arc::new(Gated {
+        entered: Mutex::new(entered_tx),
+        go: Mutex::new(go_rx),
+    }));
+    // While this thread is inside `enable`, another one marks its own call.
+    let other = thread::spawn(move || {
+        entered.recv().unwrap();
+        note_no_effect(PanelOp::Enable);
+        go.send(()).unwrap();
+    });
+    log.enable(&agent()).unwrap();
+    other.join().unwrap();
+    assert_eq!(outcomes(&log), [(PanelOp::Enable, Outcome::Done)]);
+
+    // And a default call on another thread is still that thread's.
+    let log = Arc::new(LoggedPanel::new(Arc::new(Bare)));
+    let other = {
+        let log = Arc::clone(&log);
+        thread::spawn(move || log.disable(&agent()).unwrap())
+    };
+    other.join().unwrap();
+    log.stop(&agent()).unwrap();
+    assert_eq!(
+        outcomes(&log),
+        [
+            (PanelOp::Disable, Outcome::NoEffect),
+            (PanelOp::Stop, Outcome::Done)
+        ]
+    );
 }
 
 #[test]

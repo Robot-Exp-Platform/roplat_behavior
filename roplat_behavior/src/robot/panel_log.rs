@@ -10,7 +10,10 @@ use std::{
 use roplat_msgs::{Clock, RealtimeClock, Stamp};
 use serde::{Deserialize, Serialize};
 
-use crate::{Actor, Panel, PanelStatus, RobotException, RobotResult};
+use crate::{
+    Actor, Panel, PanelStatus, RobotException, RobotResult,
+    robot::panel::{clear_no_effect, had_no_effect},
+};
 
 /// What a [`PanelEvent`] records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -35,6 +38,10 @@ pub enum PanelOp {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Outcome {
     Done,
+    /// The panel answered `Ok` but said the call did nothing on the device
+    /// ([`note_no_effect`](crate::note_no_effect)): the default `enable` and
+    /// `disable`, for one.
+    NoEffect,
     NotSupported,
     NoEmergencyStop,
     Stopped,
@@ -146,7 +153,10 @@ impl LogState {
 ///
 /// - Each operation is recorded when it returns, with its caller, its answer
 ///   and the status read right after it; that read is part of the call, so an
-///   operation through the log takes one status read longer.
+///   operation through the log takes one status read longer. An `Ok` from a
+///   call that marked itself with [`note_no_effect`](crate::note_no_effect),
+///   such as the default `enable`, is recorded as [`Outcome::NoEffect`]; the
+///   mark is cleared before each call and read on the calling thread.
 /// - A status change is noticed when the status is read through this panel,
 ///   by [`status`](Panel::status) or after an operation. A service that wants
 ///   the device's own changes promptly reads the status periodically; nothing
@@ -223,10 +233,13 @@ impl<C: Clock> LoggedPanel<C> {
             state.started += 1;
             state.in_flight += 1;
         }
+        clear_no_effect();
         let result = call(&*self.inner);
+        let no_effect = had_no_effect(op);
         let after = self.inner.status().ok();
         let at = self.clock.now();
         let outcome = match &result {
+            Ok(_) if no_effect => Outcome::NoEffect,
             Ok(_) => Outcome::Done,
             Err(error) => Outcome::from(error),
         };

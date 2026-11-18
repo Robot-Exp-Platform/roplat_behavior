@@ -54,6 +54,11 @@ fn the_kinematic_arm_passes_check_panel() {
     assert!(report.latched, "{report:?}");
     assert!(report.on_site, "{report:?}");
     assert!(report.stop_latency <= report.bound, "{report:?}");
+    assert_eq!(
+        report.enable,
+        Outcome::Done,
+        "the arm writes its own enable"
+    );
     println!(
         "stop latency {:?} of {:?}",
         report.stop_latency, report.bound
@@ -65,6 +70,71 @@ fn without_a_button_the_on_site_part_is_skipped() {
     let mut arm = Arm::new([0.0; 3]);
     let report = check_panel(&mut arm, &CHECK, joints, |_| false).unwrap();
     assert!(!report.on_site, "{report:?}");
+}
+
+/// The arm's panel without its `enable` and `disable`: the defaults, which do
+/// nothing and say so.
+struct Defaults(Arc<dyn Panel>);
+
+impl Panel for Defaults {
+    fn stop(&self, by: &Actor) -> RobotResult<()> {
+        self.0.stop(by)
+    }
+    fn emergency_stop(&self, by: &Actor) -> RobotResult<()> {
+        self.0.emergency_stop(by)
+    }
+    fn clear(&self, by: &Actor) -> RobotResult<PanelStatus> {
+        self.0.clear(by)
+    }
+    fn status(&self) -> RobotResult<PanelStatus> {
+        self.0.status()
+    }
+    fn stop_bound(&self) -> Duration {
+        self.0.stop_bound()
+    }
+}
+
+struct WithDefaults(Arm);
+
+impl Robot for WithDefaults {
+    type State = JointState<3>;
+    const CONTROL_PERIOD: Duration = Arm::CONTROL_PERIOD;
+    fn version() -> String {
+        Arm::version()
+    }
+    fn read_state(&mut self) -> RobotResult<JointState<3>> {
+        self.0.read_state()
+    }
+}
+
+impl MoveTo<JointSpace<3>> for WithDefaults {
+    fn move_to(&mut self, target: [f64; 3]) -> RobotResult<()> {
+        MoveTo::<JointSpace<3>>::move_to(&mut self.0, target)
+    }
+}
+
+impl HasPanel for WithDefaults {
+    fn panel(&self) -> Arc<dyn Panel> {
+        Arc::new(Defaults(self.0.panel()))
+    }
+}
+
+#[test]
+fn a_panel_with_the_default_enable_passes_and_the_report_says_so() {
+    // The default `enable` answers `Ok` while the emergency stop is latched,
+    // but marks that it did nothing; the motion is still refused.
+    let mut arm = WithDefaults(Arm::new([0.0; 3]));
+    let report = check_panel(&mut arm, &CHECK, |a| Ok(a.0.joints()), |_| false).unwrap();
+    assert!(report.latched, "{report:?}");
+    assert_eq!(report.enable, Outcome::NoEffect, "{report:?}");
+
+    // The button cuts the actuators, and nothing re-engages them: the
+    // on-site part names it.
+    let mut arm = WithDefaults(Arm::new([0.0; 3]));
+    let hardware = arm.0.hardware();
+    let violation =
+        check_panel(&mut arm, &CHECK, |a| Ok(a.0.joints()), press(&hardware)).unwrap_err();
+    assert_eq!(violation.check, "panel: after reset", "{violation}");
 }
 
 /// Moves `arm` on another thread and returns the handle; the arm comes back
