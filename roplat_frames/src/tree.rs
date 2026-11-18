@@ -46,6 +46,33 @@ pub struct JointGroup<const N: usize> {
     pub(crate) index: usize,
 }
 
+/// One edge of a [`FrameTree`]: `child` placed in `parent`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameEdge<'a> {
+    pub parent: FrameId,
+    pub child: FrameId,
+    pub kind: EdgeKind<'a>,
+}
+
+/// How an edge places its child, as the tree was declared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgeKind<'a> {
+    /// A pose fixed when the tree was built, and replaced only by
+    /// [`FrameTree::set_fixed`]: a [`fixed`](FrameTreeBuilder::fixed)
+    /// declaration, or a model's fixed joint.
+    Fixed,
+    /// A movable joint of a model, positioned by the joint group listing
+    /// it, `None` when no group does.
+    Joint {
+        joint: &'a str,
+        kind: JointKind,
+        group: Option<&'a str>,
+    },
+    /// A transform written at run time, see
+    /// [`FrameTreeBuilder::dynamic`].
+    Dynamic,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum Edge {
     Root,
@@ -130,6 +157,53 @@ impl FrameTree {
             return Err(TreeError::GroupSize { group: name.into(), len, requested: N });
         }
         Ok(JointGroup { index })
+    }
+
+    /// Every edge of the tree, one per frame but the root, in declaration
+    /// order of the child frames: which frame places which, and how.
+    pub fn edges(&self) -> impl Iterator<Item = FrameEdge<'_>> {
+        (0..self.frames.len()).filter_map(|index| self.edge_of(index))
+    }
+
+    /// The edge that places `child` in its parent; `None` for the root and
+    /// for frames not in the tree.
+    pub fn edge(&self, child: FrameId) -> Option<FrameEdge<'_>> {
+        self.edge_of(self.index(child).ok()?)
+    }
+
+    fn edge_of(&self, index: usize) -> Option<FrameEdge<'_>> {
+        let frame = &self.frames[index];
+        let kind = match &frame.edge {
+            Edge::Root => return None,
+            Edge::Fixed(_) => EdgeKind::Fixed,
+            Edge::Joint { joint, slot } => EdgeKind::Joint {
+                joint: &joint.name,
+                kind: joint.kind,
+                group: slot.map(|(track, _)| self.groups[track].0.as_str()),
+            },
+            Edge::Dynamic(_) => EdgeKind::Dynamic,
+        };
+        Some(FrameEdge { parent: self.frames[frame.parent].id, child: frame.id, kind })
+    }
+
+    /// Replaces the pose of `child` in its parent, which a fixed edge
+    /// places: a [`fixed`](FrameTreeBuilder::fixed) declaration or a model's
+    /// fixed joint. Every lookup from then on uses the new pose, at any
+    /// stamp, since fixed edges keep no history; to change a transform over
+    /// time, declare it [dynamic](FrameTreeBuilder::dynamic).
+    ///
+    /// [`NotStatic`](FrameError::NotStatic) for the root and for a frame a
+    /// joint or a dynamic transform places, and
+    /// [`InvalidValue`](FrameError::InvalidValue) for a pose with a
+    /// non-finite component or a zero rotation; the tree is unchanged then.
+    pub fn set_fixed(&mut self, child: FrameId, pose: &Pose) -> Result<(), FrameError> {
+        let index = self.index(child)?;
+        let frame = &mut self.frames[index];
+        let Edge::Fixed(iso) = &mut frame.edge else {
+            return Err(FrameError::NotStatic(child));
+        };
+        *iso = isometry(pose).ok_or(FrameError::InvalidValue)?;
+        Ok(())
     }
 
     /// Pose of `child` in `parent` through fixed transforms only.

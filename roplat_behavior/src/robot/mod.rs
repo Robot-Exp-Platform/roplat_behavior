@@ -19,6 +19,12 @@ pub mod types;
 pub mod panel;
 pub mod panel_log;
 
+// The contracts added in 0.10 (vehicles, battery,
+// segmentation).
+pub mod battery;
+pub mod car;
+pub mod segmentation;
+
 pub use arm::{Arm, ArmState};
 pub use async_control::{AsyncControl, AsyncControlCallback, AsyncControlWith};
 pub use category::{Humanoid, MobileBase, Quadruped, VelocityControlledBase};
@@ -42,8 +48,13 @@ pub use model::{
 };
 pub use motion::{Motion, MotionFile, MoveTo, MoveTraj, Space};
 pub use multirotor::{LandedState, Multirotor, MultirotorState, PositionSetpoint};
+pub use multirotor::{VelocitySetpoint, YawCommand};
+
+pub use battery::{Battery, BatteryFaults, BatteryReading, BatteryStatus};
+pub use car::{CarGeometry, CarLike, SteerCommand};
 pub use observe::{ControlObservation, ControlObserver};
 pub use roplat_msgs::{CartesianLimits, JointLimits, LoadState};
+pub use segmentation::{LabelClass, LabelImage};
 pub use spaces::{
     BasePoseSpace, BaseVelocitySpace, CenterOfMassSpace, CoriolisInputSpace, EndSpace, FlangeSpace,
     FootSpace, GaitCommand, GaitSpace, GravityInputSpace, HandSpace, JacobianSpace, JointSpace,

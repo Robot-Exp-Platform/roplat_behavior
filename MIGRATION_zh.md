@@ -2,7 +2,7 @@
 
 [English](MIGRATION.md)
 
-0.10 不改变契约的语义，改的是限值、相对运动、控制周期和外语绑定的表达方式，以及各项所在的包。每个包各自定版本。需要带新 `JointLimits` 字段的 `roplat_msgs`；发布之前用 roplat 分支 `claude/msgs-limits`。
+0.10 改了限值、相对运动、控制周期和外语绑定的表达方式，以及各项所在的包。也改了一部分语义：设备的停止、使能与解除从 `Robot` 移到第二个句柄 `Panel`，它的操作缺省答 `NotSupported` 而不是 `Ok`；被取代的 `Robot` 方法仍能编译，标为弃用；`RobotException` 新增 `Stopped` 与 `LocalResetRequired`。新增多旋翼速度设定点、类车辆、电池与分割图的契约，`target_pose` 与镜头函数的行为有变（见“新契约、感知与坐标系”）。每个包各自定版本。需要带新 `JointLimits` 字段的 `roplat_msgs`，roplat main 已有；roplat 发布之前，用 patch 指向 roplat 的检出。
 
 ## 包
 
@@ -111,6 +111,23 @@ let last_ten = log.recent(10);            // PanelEvent { seq, at, by, op, outco
 `LoggedPanel` 记下每个操作的调用者与回答；经它读状态时发现的、没有任何经它的操作能解释的状态变化，记为 `Actor::Device`／`PanelOp::Changed`。事件可用 serde 序列化。
 
 新的错误：`RobotException::Stopped`（停止结束了运动，或拒绝了这次调用）与 `RobotException::LocalResetRequired`。穷举匹配 `RobotException` 的代码要补上这两项。
+
+## 新契约、感知与坐标系
+
+这些新增不影响现有代码编译；签名有变的地方，除特别说明外，原来的调用照样能编译。
+
+- **多旋翼速度设定点**：`Multirotor::send_velocity(VelocitySetpoint { velocity, yaw, duration })`。`velocity` 单位 m/s，沿位置设定点所用世界系的东、北、天三轴；`yaw` 为 `YawCommand::Hold`、`Angle(rad)` 或 `Rate(rad/s)`（绕天向逆时针）；`duration` 是没有新设定点时这一个保持多久。缺省答 `NotSupported`，没实现的驱动照样能编译；能发速度的驱动覆盖它，并先调用 `setpoint.validate()?`。
+- **类车底盘**：靠前轮转向的载具实现 `CarLike`：`geometry()`（`CarGeometry { wheelbase, max_steering_angle, max_steering_rate }`）与 `drive(SteerCommand { speed, steering_angle })`。速度是后轴中点的速度，转角是自行车模型前轮的转角，左为正。超过 `max_steering_angle` 的指令按载具能转到的最大角执行（`CarGeometry::clamp`）；非有限值的指令拒绝（`SteerCommand::validate`）。它不取代 `MobileBase`，能原地转向的底盘仍用后者。`conformance::check_car_like` 检查几何参数与拒绝行为。
+- **电池**：读取电池包的类型实现 `Battery::read_battery() -> Stamped<BatteryReading>`。各量都是 `Option`；电流放电为正，电量是 `[0, 1]` 的比例，温度单位 °C，`faults` 是 `BatteryFaults` 集合。设备把放电电流报为负、或按百分比报电量的，由驱动换算。`conformance::check_battery` 检查单位，以及电流符号与状态是否一致。
+- **分割图**：给像素打标签的相机，在帧类型里放一个 `Option<LabelImage>`（`width`、`height`、逐行的 `ids`、为每个 id 命名的 `classes`，没有标签的像素为 `LabelImage::UNLABELLED`），与它所标注的图像放在一起。用 `conformance::check_segmentation(camera, advance, frames, |frame| frame.labels.as_ref())` 检查。
+- **关节点动**：`roplat_control::joint_jog_control`、`JogMapping`、`JogInput` 即 roplat_web 的 `jog_control` 及其类型。`JogMapping::new(speeds, accelerations, enable_button)` 要显式给出使能按键；roplat_web 原来固定为页面的第 0 位，传 `Some(0)` 行为不变。
+- **物体观测**：`roplat_perception::ObjectObservation`（及 `PixelBox`、`ObjectMask`）是检测、分割、标记识别与融合报告物体时共用的类型。写法：`ObjectObservation { score, pixel_box, ..ObjectObservation::new(class, stamp, frame) }`。
+- **坐标系**：`FrameTree::edges()` 与 `edge(child)` 列出每个坐标系的放置方式；`FrameTree::set_fixed` 与 `FrameBuffer::set_fixed` 就地替换固定边的位姿。新增 `so3`（指数、对数、Jacobian）与 `twist`（adjoint、旋量与力旋量的变换）两个模块。
+- **镜头与标定板位姿**，行为有变：
+  - `target::target_pose` 改为返回 `Result<TargetPose, TargetPoseError>`（`.unwrap()`、`.ok()` 照样可用），并计入镜头：原始角点配相机自己的 `CameraInfo`；校正后图像上的角点照旧配 `lens::rectified(info)`。
+  - 镜头函数拒绝 `d[5..8]` 有非零值的 `PLUMB_BOB` 相机（ROS 与 OpenCV 的 plumb_bob 只有 5 个系数，这样的相机应写成 `RATIONAL_POLYNOMIAL`）、`d[4..8]` 有非零值的 `EQUIDISTANT` 相机，以及非有限的系数。
+  - 相机矩阵的斜切 `k[1]` 现在计入（`u = fx x + s y + cx`），与 `Camera` 契约的定义一致；以前忽略。
+  - 新增：`lens::project`、`lens::ray`、`Rectify::onto`（换相机矩阵与尺寸）、`Rectify::info`、`Rectify::mask`；`target::Chessboard::render`。
 
 
 # 从 robot_behavior 0.8 迁移到 roplat_behavior 0.9

@@ -10,6 +10,7 @@
 
 - 能力契约：`Robot`、运动空间、控制通道与模型映射；夹爪、力/力矩、IMU 与相机契约。
 - 面板（`Panel`、`HasPanel`）：设备运动时从任意线程停止、使能与清除；`LoggedPanel` 记录谁做了什么。
+- 载具与电源契约：多旋翼的位置与速度设定点（`Multirotor`、`VelocitySetpoint`）、类车底盘（`CarLike`）、电池（`Battery`），以及相机帧携带的分割图（`LabelImage`）。
 - 机械臂、底盘与腿足状态。
 - 以数据表达的运动限值（`MotionLimits`、`with_limits`）与相对运动（`Relative<S>`）。
 - 供驱动测试使用的契约检查（feature `conformance`）与 roplat 适配（feature `roplat`）。
@@ -32,6 +33,10 @@
 | 读取后端原生状态 | `Robot::read_state` | `Robot` |
 | 使用机械臂状态或模型 | `Arm<N>`、`SpaceMap` 等模型 trait | 后端实际支持的能力 |
 | 在运动中从任意线程停止、暂停、使能或清除设备 | `HasPanel::panel()`，再用 `Panel`（`LoggedPanel` 记录谁做了什么） | `Panel`、`HasPanel` |
+| 让多旋翼按速度飞行 | `Multirotor::send_velocity` | `Multirotor`（缺省答 `NotSupported`） |
+| 驾驶类车底盘 | `CarLike::drive`、`CarLike::geometry` | `CarLike` |
+| 读取电池 | `Battery::read_battery` | `Battery` |
+| 读取每个像素看到的物体 | 相机帧里的 `LabelImage` | 帧类型带 `Option<LabelImage>` |
 
 ## 第一个程序：不连接机器人
 

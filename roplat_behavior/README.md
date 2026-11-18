@@ -10,6 +10,7 @@ Part of the [roplat_behavior workspace](../README.md), whose other crates hold t
 
 - Capability contracts: `Robot`, motion spaces, control channels and model maps; gripper, force/torque, IMU and camera contracts.
 - The panel (`Panel`, `HasPanel`): stopping, enabling and clearing a device from any thread while it moves; `LoggedPanel` records who did what.
+- Vehicle and power contracts: multirotor position and velocity setpoints (`Multirotor`, `VelocitySetpoint`), car-like vehicles (`CarLike`), batteries (`Battery`), and the segmentation image a camera frame carries (`LabelImage`).
 - Arm, base and legged state.
 - Motion limits as data (`MotionLimits`, `with_limits`) and relative motion (`Relative<S>`).
 - Contract checks for driver tests (feature `conformance`) and roplat adapters (feature `roplat`).
@@ -32,6 +33,10 @@ The driver owns transport, timing, state acquisition, and session termination. Y
 | Read a backend's native state | `Robot::read_state` | `Robot` |
 | Work with arm state or a model | `Arm<N>`, `SpaceMap` and model traits | Only the supported capabilities |
 | Stop, pause, enable or clear the device while it moves, from any thread | `HasPanel::panel()`, then `Panel` (`LoggedPanel` records who did what) | `Panel`, `HasPanel` |
+| Fly a multirotor at a velocity | `Multirotor::send_velocity` | `Multirotor` (default `NotSupported`) |
+| Drive a car-like vehicle | `CarLike::drive`, `CarLike::geometry` | `CarLike` |
+| Read a battery | `Battery::read_battery` | `Battery` |
+| Read which object each pixel sees | `LabelImage` in the camera's frame | The frame type carries an `Option<LabelImage>` |
 
 ## First example: a complete program without a robot
 

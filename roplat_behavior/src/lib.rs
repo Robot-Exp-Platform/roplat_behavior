@@ -55,6 +55,12 @@ pub mod behavior {
     pub use crate::robot::{
         Actor, HasPanel, LoggedPanel, Outcome, Panel, PanelEvent, PanelOp, PanelStatus, Release,
     };
+
+    // The other contracts added in 0.10.
+    pub use crate::robot::{
+        Battery, BatteryFaults, BatteryReading, BatteryStatus, CarGeometry, CarLike, LabelClass,
+        LabelImage, SteerCommand, VelocitySetpoint, YawCommand,
+    };
 }
 
 pub mod driver {

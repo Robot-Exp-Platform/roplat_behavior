@@ -1235,3 +1235,200 @@ fn ready_again(panel: &dyn Panel, by: &Actor, check: &'static str) -> Result<(),
     }
     Ok(())
 }
+
+// Checks for the contracts added in 0.10
+// (segmentation, battery, car-like vehicles).
+
+use crate::{Battery, BatteryStatus, CarLike, LabelImage, SteerCommand};
+
+/// Captures `frames` frames with `advance` between them and reads each
+/// one's segmentation with `labels`, the driver's accessor: every frame
+/// carries one, of the size of the camera's intrinsics, with one id per
+/// pixel; every id in it is [`LabelImage::UNLABELLED`] or listed in its
+/// classes, and its classes list each id once, with a name. The intrinsics
+/// and the header stream are checked as [`check_camera`] checks them.
+///
+/// Whether a pixel's label names what the pixel sees needs a known scene,
+/// so the driver's own simulation tests check it.
+pub fn check_segmentation<C, F>(
+    camera: &mut C,
+    mut advance: impl FnMut(),
+    frames: usize,
+    mut labels: F,
+) -> Result<(), Violation>
+where
+    C: Camera,
+    F: for<'a> FnMut(&'a C::Frame) -> Option<&'a LabelImage>,
+{
+    const CHECK: &str = "segmentation";
+    let info = camera.camera_info();
+    check_intrinsics("camera: intrinsics", &info)?;
+    let pixels = info.width as usize * info.height as usize;
+    let mut headers = Vec::with_capacity(frames);
+    for _ in 0..frames {
+        advance();
+        let frame = camera.capture().map_err(|e| device(CHECK, e))?;
+        let Some(image) = labels(&frame.value) else {
+            return Err(violation(CHECK, "a frame without a segmentation"));
+        };
+        if (image.width, image.height) != (info.width, info.height) {
+            return Err(violation(
+                CHECK,
+                format!(
+                    "a {} x {} segmentation of a {} x {} camera",
+                    image.width, image.height, info.width, info.height
+                ),
+            ));
+        }
+        if image.ids.len() != pixels {
+            return Err(violation(
+                CHECK,
+                format!("{} ids for {pixels} pixels", image.ids.len()),
+            ));
+        }
+        for (k, class) in image.classes.iter().enumerate() {
+            if class.name.is_empty() {
+                return Err(violation(CHECK, format!("id {} has no name", class.id)));
+            }
+            if image.classes[..k].iter().any(|c| c.id == class.id) {
+                return Err(violation(CHECK, format!("id {} is listed twice", class.id)));
+            }
+        }
+        let unknown = image.ids.iter().enumerate().find(|&(_, &id)| {
+            id != LabelImage::UNLABELLED && !image.classes.iter().any(|c| c.id == id)
+        });
+        if let Some((i, id)) = unknown {
+            let (u, v) = pixel(i, info.width);
+            return Err(violation(
+                CHECK,
+                format!("pixel ({u}, {v}) has id {id}, which the classes do not list"),
+            ));
+        }
+        headers.push(frame.header);
+    }
+    check_header_stream(CHECK, &headers)
+}
+
+/// Reads `samples` battery readings with `advance` between them: header
+/// stream, finite and non-negative voltage, charge, capacity and state of
+/// charge, a state of charge within `[0, 1]`, no more charge than capacity,
+/// a finite current and temperature, and a current whose sign agrees with
+/// the status: a pack reported
+/// [`Discharging`](BatteryStatus::Discharging) does not take in more than
+/// `current_tolerance` amperes, and one reported
+/// [`Charging`](BatteryStatus::Charging) does not give out more.
+pub fn check_battery<B: Battery>(
+    battery: &mut B,
+    mut advance: impl FnMut(),
+    samples: usize,
+    current_tolerance: f64,
+) -> Result<(), Violation> {
+    const CHECK: &str = "battery";
+    let mut headers = Vec::with_capacity(samples);
+    for _ in 0..samples {
+        advance();
+        let reading = battery.read_battery().map_err(|e| device(CHECK, e))?;
+        let b = reading.value;
+        for (name, value) in [
+            ("voltage", b.voltage),
+            ("charge", b.charge),
+            ("capacity", b.capacity),
+            ("state of charge", b.state_of_charge),
+        ] {
+            if let Some(v) = value
+                && !(v.is_finite() && v >= 0.0)
+            {
+                return Err(violation(
+                    CHECK,
+                    format!("{name} {v} is not a finite amount"),
+                ));
+            }
+        }
+        for (name, value) in [("current", b.current), ("temperature", b.temperature)] {
+            if let Some(v) = value
+                && !v.is_finite()
+            {
+                return Err(violation(CHECK, format!("{name} {v} is not finite")));
+            }
+        }
+        if let Some(soc) = b.state_of_charge
+            && soc > 1.0
+        {
+            return Err(violation(
+                CHECK,
+                format!("state of charge {soc} is above 1: a share, not percent"),
+            ));
+        }
+        if let (Some(charge), Some(capacity)) = (b.charge, b.capacity)
+            && charge > capacity * (1.0 + 1e-6)
+        {
+            return Err(violation(
+                CHECK,
+                format!("{charge} Ah left in a pack of {capacity} Ah"),
+            ));
+        }
+        if let (Some(current), Some(status)) = (b.current, b.status) {
+            let wrong = match status {
+                BatteryStatus::Discharging => current < -current_tolerance,
+                BatteryStatus::Charging => current > current_tolerance,
+                BatteryStatus::Full | BatteryStatus::Idle => false,
+            };
+            if wrong {
+                return Err(violation(
+                    CHECK,
+                    format!(
+                        "{status:?} with {current} A out of the pack: the current is \
+                         positive while it discharges"
+                    ),
+                ));
+            }
+        }
+        headers.push(reading.header);
+    }
+    check_header_stream(CHECK, &headers)
+}
+
+/// What every [`CarLike`] vehicle keeps without moving: a geometry with a
+/// positive finite wheelbase, a largest steering angle in `(0, π/2)` and,
+/// when known, a positive steering rate; and `drive` refusing a command
+/// that is not finite with
+/// [`InvalidInstruction`](RobotException::InvalidInstruction). The vehicle
+/// receives no command it would carry out. Whether it turns left for a
+/// positive angle, and along the arc the geometry predicts, needs its pose,
+/// so the driver's own simulation tests check that.
+pub fn check_car_like<V: CarLike>(car: &mut V) -> Result<(), Violation> {
+    const CHECK: &str = "car_like";
+    let g = car.geometry();
+    if !(g.wheelbase.is_finite() && g.wheelbase > 0.0) {
+        return Err(violation(CHECK, format!("wheelbase {} m", g.wheelbase)));
+    }
+    if !(g.max_steering_angle > 0.0 && g.max_steering_angle < std::f64::consts::FRAC_PI_2) {
+        return Err(violation(
+            CHECK,
+            format!(
+                "largest steering angle {} rad is not within (0, pi/2)",
+                g.max_steering_angle
+            ),
+        ));
+    }
+    if let Some(rate) = g.max_steering_rate
+        && !(rate.is_finite() && rate > 0.0)
+    {
+        return Err(violation(CHECK, format!("steering rate {rate} rad/s")));
+    }
+    for command in [
+        SteerCommand { speed: f64::NAN, steering_angle: 0.0 },
+        SteerCommand { speed: 0.0, steering_angle: f64::INFINITY },
+    ] {
+        match car.drive(command) {
+            Err(RobotException::InvalidInstruction(_)) => {}
+            other => {
+                return Err(violation(
+                    CHECK,
+                    format!("drive({command:?}) returned {other:?}, not InvalidInstruction"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}

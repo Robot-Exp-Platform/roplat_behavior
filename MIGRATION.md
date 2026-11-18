@@ -2,7 +2,7 @@
 
 [简体中文](MIGRATION_zh.md)
 
-0.10 keeps the contracts' semantics and changes how limits, relative motion, periods and foreign bindings are expressed, and which crate holds what. Each crate now has its own version. Needs `roplat_msgs` with the new `JointLimits` fields (roplat branch `claude/msgs-limits` until it is released).
+0.10 changes how limits, relative motion, periods and foreign bindings are expressed, and which crate holds what. It also changes some semantics: stopping, enabling and clearing a device move from `Robot` to a second handle, the `Panel`, whose operations default to `NotSupported` rather than `Ok`; the `Robot` methods they replace still compile and are deprecated; and `RobotException` gains `Stopped` and `LocalResetRequired`. New contracts cover multirotor velocity setpoints, car-like vehicles, batteries and segmentation images, and `target_pose` and the lens functions change behaviour (see "New contracts, perception and frames"). Each crate now has its own version. Needs `roplat_msgs` with the new `JointLimits` fields, which roplat main has; until roplat is released, patch it to a roplat checkout.
 
 ## Crates
 
@@ -111,6 +111,23 @@ let last_ten = log.recent(10);            // PanelEvent { seq, at, by, op, outco
 `LoggedPanel` records each operation with its caller and answer, and a change of status that no operation through it explains as `Actor::Device` / `PanelOp::Changed`, noticed when the status is read through it. Events serialize with serde.
 
 New errors: `RobotException::Stopped` (a stop ended the motion or refused the call) and `RobotException::LocalResetRequired`. Code that matches `RobotException` exhaustively adds them.
+
+## New contracts, perception and frames
+
+These additions keep existing code compiling; where a signature changed, the old calls still compile unless noted.
+
+- **Multirotor velocity setpoints.** `Multirotor::send_velocity(VelocitySetpoint { velocity, yaw, duration })`: `velocity` in m/s along the world east, north and up axes of position setpoints, `yaw` one of `YawCommand::Hold`, `Angle(rad)` or `Rate(rad/s)` (counter-clockwise about up), and `duration` how long the setpoint holds without another. It defaults to `NotSupported`, so a driver without it still builds; a driver that sends velocities overrides it and calls `setpoint.validate()?` first.
+- **Car-like vehicles.** A vehicle steered by its front wheels implements `CarLike`: `geometry()` (`CarGeometry { wheelbase, max_steering_angle, max_steering_rate }`) and `drive(SteerCommand { speed, steering_angle })`, the speed of the rear axle's midpoint and the bicycle model's front-wheel angle, left positive. A command beyond `max_steering_angle` steers as far as the vehicle can (`CarGeometry::clamp`); a command that is not finite is refused (`SteerCommand::validate`). It does not replace `MobileBase`, which stays for bases that turn on the spot. `conformance::check_car_like` checks the geometry and the refusal.
+- **Batteries.** A type that reads a pack implements `Battery::read_battery() -> Stamped<BatteryReading>`. Every quantity is an `Option`; the current is positive while the pack discharges, the state of charge a share in `[0, 1]`, the temperature in °C, `faults` a `BatteryFaults` set. A driver whose device reports discharge current as negative, or percent, converts. `conformance::check_battery` checks the units and the sign against the status.
+- **Segmentation images.** A camera that labels pixels gives its frame type an `Option<LabelImage>` (`width`, `height`, `ids` row by row, `classes` naming each id, `LabelImage::UNLABELLED` for nothing labelled) beside the image it labels. `conformance::check_segmentation(camera, advance, frames, |frame| frame.labels.as_ref())` checks it.
+- **Joint jogging.** `roplat_control::joint_jog_control`, `JogMapping` and `JogInput` are roplat_web's `jog_control` and its types. `JogMapping::new(speeds, accelerations, enable_button)` takes the dead-man button, which roplat_web's version fixed to its page's bit 0: pass `Some(0)` for the same behaviour.
+- **Object observations.** `roplat_perception::ObjectObservation` (with `PixelBox` and `ObjectMask`) is the type a detector, segmenter, marker reader or fusion step reports an object in. Build one with `ObjectObservation { score, pixel_box, ..ObjectObservation::new(class, stamp, frame) }`.
+- **Frames.** `FrameTree::edges()` and `edge(child)` list how each frame is placed; `FrameTree::set_fixed` and `FrameBuffer::set_fixed` replace a fixed edge's pose in place. `so3` (exponential, logarithm, Jacobians) and `twist` (adjoint, twist and wrench transforms) are new modules.
+- **Lens and target pose.** Changed behaviour:
+  - `target::target_pose` returns `Result<TargetPose, TargetPoseError>` instead of an `Option` (`.unwrap()` and `.ok()` still work) and models the lens: pass the camera's own `CameraInfo` with the raw corners, or `lens::rectified(info)` with corners of a rectified image as before.
+  - The lens functions refuse a `PLUMB_BOB` camera with any of `d[5..8]` set (ROS and OpenCV define five coefficients; such a camera is `RATIONAL_POLYNOMIAL`), an `EQUIDISTANT` one with any of `d[4..8]` set, and coefficients that are not finite.
+  - The camera matrix's skew `k[1]` is now modelled (`u = fx x + s y + cx`), as the `Camera` contract defines it; before, it was ignored.
+  - New: `lens::project`, `lens::ray`, `Rectify::onto` (another camera matrix and size), `Rectify::info` and `Rectify::mask`; `target::Chessboard::render`.
 
 
 # Migrating from robot_behavior 0.8 to roplat_behavior 0.9

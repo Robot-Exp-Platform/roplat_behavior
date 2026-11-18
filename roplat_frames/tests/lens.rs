@@ -7,8 +7,10 @@ use std::sync::OnceLock;
 
 use nalgebra::{Isometry3, Matrix3, Rotation3, Translation3, UnitQuaternion, Vector3};
 use roplat_frames::{
-    lens::{Rectify, rectified, undistort},
-    target::{Chessboard, DetectOptions, TargetPose, detect_chessboard, target_pose},
+    lens::{Rectify, project, rectified, undistort},
+    target::{
+        Chessboard, DetectOptions, TargetPose, TargetPoseError, detect_chessboard, target_pose,
+    },
 };
 use roplat_msgs::{CameraInfo, distortion_model};
 
@@ -174,5 +176,109 @@ fn raw_corners_need_undistorting() {
             naive.rms > 5.0 * pose.rms && naive_offset > 5.0 * offset,
             "view {k}"
         );
+    }
+}
+
+/// `target_pose` with the distorted camera takes the raw corners as they
+/// were detected: the same pose as undistorting them first, with the
+/// residual in raw pixels.
+#[test]
+fn the_pose_through_the_lens_needs_no_undistorting() {
+    let pinhole = rectified(&info());
+    for (k, truth) in views().iter().enumerate() {
+        let raw = detect_chessboard(
+            &images()[k],
+            WIDTH,
+            HEIGHT,
+            &BOARD,
+            &DetectOptions::default(),
+        )
+        .unwrap_or_else(|| panic!("view {k}: no board in the raw image"));
+        let through = target_pose(&raw, &BOARD.corners(), &info()).unwrap();
+        let (offset, turn) = error(&through, truth);
+        let ideal: Vec<[f64; 2]> = raw
+            .iter()
+            .map(|&p| undistort(&info(), p).unwrap())
+            .collect();
+        let undistorted = target_pose(&ideal, &BOARD.corners(), &pinhole).unwrap();
+        let (u_offset, u_turn) = error(&undistorted, truth);
+        eprintln!(
+            "through the lens view {k}: {offset:.6} m, {turn:.4} deg, rms {:.3} px; \
+             undistorted first {u_offset:.6} m, {u_turn:.4} deg",
+            through.rms
+        );
+        assert!(
+            offset < 0.001 && turn < 0.2 && through.rms < 0.2,
+            "view {k}"
+        );
+        let apart = (through.pose.translation.vector - undistorted.pose.translation.vector).norm();
+        assert!(apart < 2e-4, "view {k}: the two poses are {apart} m apart");
+    }
+}
+
+/// Exact raw pixels of a distorted camera give the exact pose; a pixel no
+/// ray of the lens reaches is named.
+#[test]
+fn exact_raw_pixels_give_the_exact_pose() {
+    let truth = views()[0];
+    let corners = BOARD.corners();
+    let raw: Vec<[f64; 2]> = corners
+        .iter()
+        .map(|c| {
+            let p = truth * nalgebra::Point3::from(*c);
+            project(&info(), [p.x, p.y, p.z]).unwrap()
+        })
+        .collect();
+    let pose = target_pose(&raw, &corners, &info()).unwrap();
+    let (offset, turn) = error(&pose, &truth);
+    assert!(
+        offset < 1e-9 && turn < 1e-7 && pose.rms < 1e-6,
+        "{offset} m, {turn} deg"
+    );
+    // A fisheye sees nothing beyond 90 degrees off its axis.
+    let fisheye = CameraInfo {
+        distortion_model: distortion_model::EQUIDISTANT,
+        d: [0.0; 8],
+        ..info()
+    };
+    let mut far = raw.clone();
+    far[7] = [319.5 + FOCAL * 2.0, 239.5];
+    assert_eq!(
+        target_pose(&far, &corners, &fisheye),
+        Err(TargetPoseError::NoRay(7))
+    );
+}
+
+/// The map onto a smaller camera matrix keeps the whole raw view, so a
+/// board in the rim is found there too, and its pose comes out with that
+/// camera.
+#[test]
+fn a_wider_rectified_camera_keeps_the_rim() {
+    let wide = CameraInfo {
+        k: [
+            0.8 * FOCAL,
+            0.0,
+            319.5,
+            0.0,
+            0.8 * FOCAL,
+            239.5,
+            0.0,
+            0.0,
+            1.0,
+        ],
+        ..rectified(&info())
+    };
+    let map = Rectify::onto(&info(), &wide).unwrap();
+    for (k, truth) in views().iter().enumerate() {
+        let image = map.bilinear(&images()[k], 1);
+        let corners = detect_chessboard(&image, WIDTH, HEIGHT, &BOARD, &DetectOptions::default())
+            .unwrap_or_else(|| panic!("view {k}: no board in the wide image"));
+        let pose = target_pose(&corners, &BOARD.corners(), map.info()).unwrap();
+        let (offset, turn) = error(&pose, truth);
+        eprintln!(
+            "wide view {k}: {offset:.6} m, {turn:.4} deg, rms {:.3} px",
+            pose.rms
+        );
+        assert!(offset < 0.0015 && turn < 0.3 && pose.rms < 0.25, "view {k}");
     }
 }

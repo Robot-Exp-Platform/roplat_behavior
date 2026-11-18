@@ -14,6 +14,7 @@ Part of the [roplat_behavior workspace](../README.md). 0.9 is not on crates.io y
 - `tabletop`: all of it in one call (`segment_tabletop`), returning the table and each object on it.
 - `registration`: ICP, point-to-point (`icp`) or point-to-plane (`icp_point_to_plane`), for the pose of an object whose model is known.
 - `normals`: surface normals and curvature (`estimate_normals`, PCL's `NormalEstimation`), and smooth regions grown across them (`smooth_regions`, PCL's `RegionGrowing`), which separate surfaces that touch at a crease.
+- `object`: `ObjectObservation`, one type for what perception reports about an object (a detector, a segmenter, a marker reader, a radar's object list, a fusion step): class, score, stamp and frame always, and where the source knows them a pose, a size, a pixel box (`PixelBox`, with IoU), a mask (`ObjectMask`, packed as `numpy.packbits` packs), a colour and a track number. A field the source does not give is `None`.
 - `search`: exact nearest-neighbour queries by a k-d tree (`KdTree`): the nearest point, the `k` nearest (`k_nearest`, PCL's `nearestKSearch`) and every point within a radius (`within`, PCL's `radiusSearch`) of any query point. Answers are ordered by distance and then by index, and match brute force exactly ([`search.rs`](tests/search.rs)).
 
 Depth images become points in [`roplat_scene`](../roplat_scene/README.md) (`points::depth_to_points`), and the objects found go to [`roplat_grasp`](../roplat_grasp/README.md) and the planning scene.
