@@ -2,7 +2,7 @@
 
 [简体中文](MIGRATION_zh.md)
 
-0.10 changes how limits, relative motion, periods and foreign bindings are expressed, and which crate holds what. It also changes some semantics: stopping, enabling and clearing a device move from `Robot` to a second handle, the `Panel`, whose operations default to `NotSupported` rather than `Ok`; the `Robot` methods they replace still compile and are deprecated; and `RobotException` gains `Stopped` and `LocalResetRequired`. New contracts cover multirotor velocity setpoints, car-like vehicles, batteries and segmentation images, and `target_pose` and the lens functions change behaviour (see "New contracts, perception and frames"). Each crate now has its own version. Needs `roplat_msgs` with the new `JointLimits` fields, which roplat main has; until roplat is released, patch it to a roplat checkout.
+0.10 changes how limits, relative motion, periods and foreign bindings are expressed, and which crate holds what. It also changes some semantics: stopping, enabling and clearing a device move from `Robot` to a second handle, the `Panel`, whose operations default to `NotSupported` rather than `Ok` (provisional for `enable` and `disable`, pending the author's ruling); the `Robot` methods they replace still compile and are deprecated; and `RobotException` gains `Stopped` and `LocalResetRequired`. New contracts cover multirotor velocity setpoints, car-like vehicles, batteries and segmentation images, and `target_pose` and the lens functions change behaviour (see "New contracts, perception and frames"). Each crate now has its own version. Needs `roplat_msgs` with the new `JointLimits` fields, which roplat main has; until roplat is released, patch it to a roplat checkout.
 
 ## Crates
 
@@ -76,7 +76,7 @@ A device's stops, enabling and status move from `Robot` to a second handle, the 
 | `robot.stop()` | `panel.stop(&by)`: a motion in progress returns `Err(Stopped)` within `panel.stop_bound()`; nothing latches |
 | `robot.emergency_stop()` | `panel.emergency_stop(&by)`: `Ok` only when latched, else `NoEmergencyStop`, as before |
 | `robot.clear_emergency_stop()` | `panel.clear(&by) -> PanelStatus`: releases every stop software may release, whoever caused it; `Err(LocalResetRequired)` while a stop that needs an on-site reset holds the device |
-| `robot.enable()`, `robot.disable()`, `robot.pause()`, `robot.resume()` | `panel.enable(&by)` and so on; they default to `NotSupported`, not `Ok` |
+| `robot.enable()`, `robot.disable()`, `robot.pause()`, `robot.resume()` | `panel.enable(&by)` and so on; they default to `NotSupported`, not `Ok` (the `enable` and `disable` defaults are provisional, pending the author's ruling: engineering-style ruling 27 keeps `Robot`'s at `Ok`; driver panels write both out until then) |
 | none | `panel.status() -> PanelStatus`: `enabled`, `paused`, `software_estop`, `device_estop`, `protective_stop` (the last two with `Release::Clear` or `Release::OnSite`) |
 
 `Robot::stop`, `emergency_stop`, `clear_emergency_stop`, `enable`, `disable`, `pause` and `resume` still work in 0.10 and are deprecated; they go in the next minor version. A driver that overrides them compiles without warnings; code that calls them gets a deprecation warning, which `-D warnings` turns into an error. `init`, `shutdown`, `reset`, `is_moving` and `waiting_for_finish` stay on `Robot`.

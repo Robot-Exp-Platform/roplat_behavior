@@ -2,7 +2,7 @@
 
 [English](MIGRATION.md)
 
-0.10 改了限值、相对运动、控制周期和外语绑定的表达方式，以及各项所在的包。也改了一部分语义：设备的停止、使能与解除从 `Robot` 移到第二个句柄 `Panel`，它的操作缺省答 `NotSupported` 而不是 `Ok`；被取代的 `Robot` 方法仍能编译，标为弃用；`RobotException` 新增 `Stopped` 与 `LocalResetRequired`。新增多旋翼速度设定点、类车辆、电池与分割图的契约，`target_pose` 与镜头函数的行为有变（见“新契约、感知与坐标系”）。每个包各自定版本。需要带新 `JointLimits` 字段的 `roplat_msgs`，roplat main 已有；roplat 发布之前，用 patch 指向 roplat 的检出。
+0.10 改了限值、相对运动、控制周期和外语绑定的表达方式，以及各项所在的包。也改了一部分语义：设备的停止、使能与解除从 `Robot` 移到第二个句柄 `Panel`，它的操作缺省答 `NotSupported` 而不是 `Ok`（`enable`、`disable` 两个是暂定，待作者裁定）；被取代的 `Robot` 方法仍能编译，标为弃用；`RobotException` 新增 `Stopped` 与 `LocalResetRequired`。新增多旋翼速度设定点、类车辆、电池与分割图的契约，`target_pose` 与镜头函数的行为有变（见“新契约、感知与坐标系”）。每个包各自定版本。需要带新 `JointLimits` 字段的 `roplat_msgs`，roplat main 已有；roplat 发布之前，用 patch 指向 roplat 的检出。
 
 ## 包
 
@@ -76,7 +76,7 @@ to_py = ["dep:pyo3", "dep:roplat_behavior_ffi", "roplat_behavior_ffi/py"]
 | `robot.stop()` | `panel.stop(&by)`：进行中的运动在 `panel.stop_bound()` 内返回 `Err(Stopped)`；不锁存 |
 | `robot.emergency_stop()` | `panel.emergency_stop(&by)`：只有锁存了才答 `Ok`，否则答 `NoEmergencyStop`，与原来相同 |
 | `robot.clear_emergency_stop()` | `panel.clear(&by) -> PanelStatus`：清除软件可以清除的一切停止，不论是谁引起的；需要现场复位的停止还在时答 `Err(LocalResetRequired)` |
-| `robot.enable()`、`robot.disable()`、`robot.pause()`、`robot.resume()` | `panel.enable(&by)` 等；缺省答 `NotSupported`，不是 `Ok` |
+| `robot.enable()`、`robot.disable()`、`robot.pause()`、`robot.resume()` | `panel.enable(&by)` 等；缺省答 `NotSupported`，不是 `Ok`（`enable`、`disable` 的缺省是暂定，待作者裁定：工程风格裁定 27 让 `Robot` 上的这两个保留 `Ok`；在那之前驱动的面板两个都显式写出） |
 | 无 | `panel.status() -> PanelStatus`：`enabled`、`paused`、`software_estop`、`device_estop`、`protective_stop`（后两个取 `Release::Clear` 或 `Release::OnSite`） |
 
 `Robot` 的 `stop`、`emergency_stop`、`clear_emergency_stop`、`enable`、`disable`、`pause`、`resume` 在 0.10 里照常可用，标为弃用，下一个小版本删除。覆写它们的驱动编译时没有警告；调用它们的代码会有弃用警告，`-D warnings` 下即为错误。`init`、`shutdown`、`reset`、`is_moving`、`waiting_for_finish` 仍留在 `Robot` 上。

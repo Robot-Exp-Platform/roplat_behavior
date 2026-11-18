@@ -143,6 +143,10 @@ pub trait Panel: Send + Sync + 'static {
     /// Disengages the actuators, possibly cutting their power with the brakes
     /// engaged. The motion in progress ends as for [`stop`](Panel::stop);
     /// [`enable`](Panel::enable) engages them again.
+    ///
+    /// The default (`NotSupported`) is provisional, pending the author's ruling
+    /// on whether engineering-style ruling 27 (`Ok` by default) governs the
+    /// panel; until then a driver's panel writes this method out.
     fn disable(&self, by: &Actor) -> RobotResult<()> {
         let _ = by;
         Err(RobotException::NotSupported { operation: "disable" })
@@ -161,6 +165,10 @@ pub trait Panel: Send + Sync + 'static {
 
     /// Engages the actuators so that motion calls work. Fails while a stop
     /// holds the device.
+    ///
+    /// The default (`NotSupported`) is provisional, pending the author's ruling
+    /// on whether engineering-style ruling 27 (`Ok` by default) governs the
+    /// panel; until then a driver's panel writes this method out.
     fn enable(&self, by: &Actor) -> RobotResult<()> {
         let _ = by;
         Err(RobotException::NotSupported { operation: "enable" })
