@@ -1,10 +1,42 @@
 //! The panel: a device's stops, enabling and status, apart from its motion.
 
-use std::{sync::Arc, time::Duration};
+use std::{cell::Cell, sync::Arc, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Robot, RobotException, RobotResult};
+use crate::{PanelOp, Robot, RobotException, RobotResult};
+
+thread_local! {
+    /// The panel operation on this thread that said it had no effect, since
+    /// [`LoggedPanel`](crate::LoggedPanel) last cleared it.
+    static NO_EFFECT: Cell<Option<PanelOp>> = const { Cell::new(None) };
+}
+
+/// Says that the panel call `op` running on this thread does nothing on the
+/// device, although it answers `Ok`.
+///
+/// The defaults of [`Panel::enable`] and [`Panel::disable`] call it. A driver
+/// whose `enable` or `disable` deliberately does nothing (a device that is
+/// always engaged, say) calls it too, from the thread that runs the panel
+/// method, so that a [`LoggedPanel`](crate::LoggedPanel) records
+/// [`Outcome::NoEffect`](crate::Outcome::NoEffect) instead of `Done` and the
+/// service can tell its caller nothing happened. It is a mark for this one
+/// call; it changes nothing else.
+pub fn note_no_effect(op: PanelOp) {
+    NO_EFFECT.with(|noted| noted.set(Some(op)));
+}
+
+/// Clears this thread's mark before a panel call.
+pub(crate) fn clear_no_effect() {
+    NO_EFFECT.with(|noted| noted.set(None));
+}
+
+/// Whether the panel call `op` that just returned on this thread said it had
+/// no effect. The mark stays, so that a log wrapped around this one sees it
+/// too.
+pub(crate) fn had_no_effect(op: PanelOp) -> bool {
+    NO_EFFECT.with(|noted| noted.get() == Some(op))
+}
 
 /// Who asked for a panel operation.
 ///
@@ -96,8 +128,9 @@ impl PanelStatus {
 ///
 /// A call returns once the device has the request; it does not wait for the
 /// device to come to rest. While a stop holds the device (see
-/// [`PanelStatus::held`]), motion calls and `enable` fail without moving it,
-/// with `Stopped` where the driver can tell.
+/// [`PanelStatus::held`]), motion calls and a driver's own `enable` fail without
+/// moving it, with `Stopped` where the driver can tell (the default `enable`
+/// does nothing, see below).
 ///
 /// # Who may
 ///
@@ -111,10 +144,14 @@ impl PanelStatus {
 /// # Defaults
 ///
 /// `stop`, `emergency_stop`, `clear`, `status` and `stop_bound` are required.
-/// `pause`, `resume`, `enable` and `disable` default to
-/// [`NotSupported`](RobotException::NotSupported): a default `Ok` would claim
-/// an effect the device may not have (an `enable` that succeeds while an
-/// emergency stop is latched, for one).
+/// `pause` and `resume` default to
+/// [`NotSupported`](RobotException::NotSupported). `enable` and `disable`
+/// default to doing nothing and answering `Ok(())`, as `Robot`'s do
+/// (engineering-style ruling 27); the author kept this for now on 2026-11-18,
+/// on condition that the call says it had no effect. So the defaults call
+/// [`note_no_effect`], and a [`LoggedPanel`](crate::LoggedPanel) records
+/// [`Outcome::NoEffect`](crate::Outcome::NoEffect) for them. A driver whose
+/// device can be enabled or disabled overrides both.
 pub trait Panel: Send + Sync + 'static {
     /// Ends the motion in progress: it returns `Stopped` within
     /// [`stop_bound`](Panel::stop_bound) and the device comes to rest. Nothing
@@ -123,7 +160,7 @@ pub trait Panel: Send + Sync + 'static {
     fn stop(&self, by: &Actor) -> RobotResult<()>;
 
     /// The strongest stop the device allows, latched: the motion in progress
-    /// ends as for [`stop`](Panel::stop), and motion calls and `enable` fail
+    /// ends as for [`stop`](Panel::stop), and motion calls and a driver's `enable` fail
     /// until [`clear`](Panel::clear). [`PanelStatus::software_estop`] shows the
     /// latch.
     ///
@@ -144,12 +181,17 @@ pub trait Panel: Send + Sync + 'static {
     /// engaged. The motion in progress ends as for [`stop`](Panel::stop);
     /// [`enable`](Panel::enable) engages them again.
     ///
-    /// The default (`NotSupported`) is provisional, pending the author's ruling
-    /// on whether engineering-style ruling 27 (`Ok` by default) governs the
-    /// panel; until then a driver's panel writes this method out.
+    /// The default does nothing and answers `Ok(())`, the author's ruling of
+    /// 2026-11-18 (kept for now). The call is marked as having had no effect
+    /// ([`note_no_effect`]), so a [`LoggedPanel`](crate::LoggedPanel) records
+    /// [`Outcome::NoEffect`](crate::Outcome::NoEffect). A caller that uses the
+    /// panel directly, not through `LoggedPanel`, gets a silent `Ok(())`; the
+    /// notice is the `Outcome::NoEffect` that `LoggedPanel` records, which the
+    /// services report. A driver whose device can be disabled overrides it.
     fn disable(&self, by: &Actor) -> RobotResult<()> {
         let _ = by;
-        Err(RobotException::NotSupported { operation: "disable" })
+        note_no_effect(PanelOp::Disable);
+        Ok(())
     }
 
     /// Releases every stop software may release: the software emergency stop
@@ -163,15 +205,21 @@ pub trait Panel: Send + Sync + 'static {
     /// never `Ok`.
     fn clear(&self, by: &Actor) -> RobotResult<PanelStatus>;
 
-    /// Engages the actuators so that motion calls work. Fails while a stop
-    /// holds the device.
+    /// Engages the actuators so that motion calls work. A driver's `enable`
+    /// fails while a stop holds the device.
     ///
-    /// The default (`NotSupported`) is provisional, pending the author's ruling
-    /// on whether engineering-style ruling 27 (`Ok` by default) governs the
-    /// panel; until then a driver's panel writes this method out.
+    /// The default does nothing and answers `Ok(())`, the author's ruling of
+    /// 2026-11-18 (kept for now): it does not even check what holds the
+    /// device. The call is marked as having had no effect
+    /// ([`note_no_effect`]), so a [`LoggedPanel`](crate::LoggedPanel) records
+    /// [`Outcome::NoEffect`](crate::Outcome::NoEffect). A caller that uses the
+    /// panel directly, not through `LoggedPanel`, gets a silent `Ok(())`; the
+    /// notice is the `Outcome::NoEffect` that `LoggedPanel` records, which the
+    /// services report. A driver whose device can be enabled overrides it.
     fn enable(&self, by: &Actor) -> RobotResult<()> {
         let _ = by;
-        Err(RobotException::NotSupported { operation: "enable" })
+        note_no_effect(PanelOp::Enable);
+        Ok(())
     }
 
     /// Continues a motion held by [`pause`](Panel::pause).

@@ -2,7 +2,7 @@
 
 [English](MIGRATION.md)
 
-0.10 改了限值、相对运动、控制周期和外语绑定的表达方式，以及各项所在的包。也改了一部分语义：设备的停止、使能与解除从 `Robot` 移到第二个句柄 `Panel`，它的操作缺省答 `NotSupported` 而不是 `Ok`（`enable`、`disable` 两个是暂定，待作者裁定）；被取代的 `Robot` 方法仍能编译，标为弃用；`RobotException` 新增 `Stopped` 与 `LocalResetRequired`。新增多旋翼速度设定点、类车辆、电池与分割图的契约，`target_pose` 与镜头函数的行为有变（见“新契约、感知与坐标系”）。每个包各自定版本。需要带新 `JointLimits` 字段的 `roplat_msgs`，roplat main 已有；roplat 发布之前，用 patch 指向 roplat 的检出。
+0.10 改了限值、相对运动、控制周期和外语绑定的表达方式，以及各项所在的包。也改了一部分语义：设备的停止、使能与解除从 `Robot` 移到第二个句柄 `Panel`，它的 `pause`、`resume` 缺省答 `NotSupported` 而不是 `Ok`；`enable`、`disable` 缺省什么也不做、答 `Ok`，但把这次调用标记为没有效果（作者 2026-11-18 的裁定）；被取代的 `Robot` 方法仍能编译，标为弃用；`RobotException` 新增 `Stopped` 与 `LocalResetRequired`。新增多旋翼速度设定点、类车辆、电池与分割图的契约，`target_pose` 与镜头函数的行为有变（见“新契约、感知与坐标系”）。每个包各自定版本。需要带新 `JointLimits` 字段的 `roplat_msgs`，roplat main 已有；roplat 发布之前，用 patch 指向 roplat 的检出。
 
 ## 包
 
@@ -76,7 +76,7 @@ to_py = ["dep:pyo3", "dep:roplat_behavior_ffi", "roplat_behavior_ffi/py"]
 | `robot.stop()` | `panel.stop(&by)`：进行中的运动在 `panel.stop_bound()` 内返回 `Err(Stopped)`；不锁存 |
 | `robot.emergency_stop()` | `panel.emergency_stop(&by)`：只有锁存了才答 `Ok`，否则答 `NoEmergencyStop`，与原来相同 |
 | `robot.clear_emergency_stop()` | `panel.clear(&by) -> PanelStatus`：清除软件可以清除的一切停止，不论是谁引起的；需要现场复位的停止还在时答 `Err(LocalResetRequired)` |
-| `robot.enable()`、`robot.disable()`、`robot.pause()`、`robot.resume()` | `panel.enable(&by)` 等；缺省答 `NotSupported`，不是 `Ok`（`enable`、`disable` 的缺省是暂定，待作者裁定：工程风格裁定 27 让 `Robot` 上的这两个保留 `Ok`；在那之前驱动的面板两个都显式写出） |
+| `robot.enable()`、`robot.disable()`、`robot.pause()`、`robot.resume()` | `panel.enable(&by)` 等。`pause`、`resume` 缺省答 `NotSupported`，不是 `Ok`。`enable`、`disable` 缺省什么也不做、答 `Ok(())`，与 `Robot` 上的相同（工程风格裁定 27；作者 2026-11-18 定为暂时保留，条件是调用要说明自己没有起作用）：缺省会调 `note_no_effect`，`LoggedPanel` 记 `Outcome::NoEffect`。不经 `LoggedPanel`、直接调用面板的调用方只得到一个无声的 `Ok(())`；提醒就是 `LoggedPanel` 记下、由服务回报的 `Outcome::NoEffect`。设备能使能、去使能的驱动覆写这两个；有意什么也不做的驱动自己调 `note_no_effect(PanelOp::Enable)` 或 `(PanelOp::Disable)` |
 | 无 | `panel.status() -> PanelStatus`：`enabled`、`paused`、`software_estop`、`device_estop`、`protective_stop`（后两个取 `Release::Clear` 或 `Release::OnSite`） |
 
 `Robot` 的 `stop`、`emergency_stop`、`clear_emergency_stop`、`enable`、`disable`、`pause`、`resume` 在 0.10 里照常可用，标为弃用，下一个小版本删除。覆写它们的驱动编译时没有警告；调用它们的代码会有弃用警告，`-D warnings` 下即为错误。`init`、`shutdown`、`reset`、`is_moving`、`waiting_for_finish` 仍留在 `Robot` 上。
@@ -97,7 +97,7 @@ impl HasPanel for MyArm {
 - `stop_bound()` 是设备结束运动并静止所需的时间，含减速，以及一个周期内最长的等待。
 - `status()` 从设备读：软件急停指经 `emergency_stop` 要求的急停；设备自己的按钮或安全回路是 `device_estop`，通常为 `Release::OnSite`；设备为保护自己而停是 `protective_stop`。
 
-在驱动的测试里跑 `conformance::check_panel(&mut robot, &check, joints, press)`：它从另一个线程停住运动并检查停止时限；检查急停在 `clear` 之前一直有效、`enable` 在此之前不成功；`press` 能按下设备自己的急停时，检查 `clear` 答 `LocalResetRequired`。
+在驱动的测试里跑 `conformance::check_panel(&mut robot, &check, joints, press)`：它从另一个线程停住运动并检查停止时限；检查急停在 `clear` 之前一直有效、`enable` 在此之前不起作用（缺省的 `enable` 答 `Ok` 并标记为没有效果；报告的 `enable` 字段写明是哪一种）；`press` 能按下设备自己的急停时，检查 `clear` 答 `LocalResetRequired`。
 
 **服务**（MCP、Web、控制台）在把机器人交给运动线程之前取 `robot.panel()`，不再另用一个 `Robot` 值来停止。谁可以做哪个恢复操作由服务定，面板不管。要留记录，就把面板包一层，发出去的是包装：
 

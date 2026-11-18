@@ -39,7 +39,10 @@ use crate::{
 // The panel check (0.10).
 use std::time::Instant;
 
-use crate::{Actor, HasPanel, JointSpace, MoveTo, Panel, Release, RobotResult};
+use crate::{
+    Actor, HasPanel, JointSpace, MoveTo, Outcome, Panel, PanelOp, Release, RobotResult,
+    robot::panel::{clear_no_effect, had_no_effect},
+};
 
 /// A broken contract promise.
 #[derive(Debug)]
@@ -1000,6 +1003,11 @@ pub struct PanelReport {
     /// Whether the device's own emergency stop was exercised; `false` when
     /// the caller's `press` said it could not engage it.
     pub on_site: bool,
+    /// What `enable` answered when the check last made the device ready:
+    /// [`Done`](Outcome::Done), [`NoEffect`](Outcome::NoEffect) (it answered
+    /// `Ok` but did nothing, as the default does) or
+    /// [`NotSupported`](Outcome::NotSupported).
+    pub enable: Outcome,
 }
 
 /// Uses a device's [`Panel`] from another thread while its control handle
@@ -1013,15 +1021,16 @@ pub struct PanelReport {
 ///    joints must then stay within `still` for `watch`; nothing may hold the
 ///    device, and the next motion must run.
 /// 2. **Emergency stop**: when `emergency_stop` latches (answers `Ok`), the
-///    status must show the software emergency stop, and `enable` and a motion
-///    must fail without moving the joints until `clear`. After `clear`,
-///    `enable` (or `NotSupported`, for a device without one) must leave it
-///    ready. `NoEmergencyStop` skips this part; the report says so.
+///    status must show the software emergency stop; until `clear`, `enable`
+///    must not take effect (it fails, or answers `Ok` marked as having no
+///    effect, as the default does) and a motion must fail without moving the
+///    joints. After `clear`, `enable` (or `NotSupported`, for a device without
+///    one) must leave it ready; the report says what `enable` answered. `NoEmergencyStop` skips this part; the report says so.
 /// 3. **On-site stop**: `press(true)` engages the device's own emergency stop
 ///    (a simulator's button, or a person at the device) and returns whether
 ///    it could. The status must then show it as [`Release::OnSite`], `clear`
 ///    must answer [`LocalResetRequired`](RobotException::LocalResetRequired),
-///    never `Ok`, and `enable` must fail. `press(false)` releases and resets
+///    never `Ok`, and `enable` must not take effect. `press(false)` releases and resets
 ///    it at the device, after which `clear` and `enable` must leave the
 ///    device ready.
 ///
@@ -1120,6 +1129,7 @@ where
         .map_err(|e| device("panel: after stop", e))?;
 
     // 2. An emergency stop holds the device until it is cleared.
+    let mut enabled;
     let latched = match panel.emergency_stop(&by) {
         Ok(()) => true,
         Err(RobotException::NoEmergencyStop) => false,
@@ -1135,7 +1145,7 @@ where
                 format!("emergency_stop latched, but the status is {status:?}"),
             ));
         }
-        if panel.enable(&by).is_ok() {
+        if matches!(enable(&*panel, &by), Ok(true)) {
             return Err(violation(
                 "panel: enable while held",
                 "enable answered Ok while the emergency stop was latched",
@@ -1161,11 +1171,11 @@ where
                 format!("clear answered {cleared:?}: the emergency stop is still latched"),
             ));
         }
-        ready_again(&*panel, &by, "panel: after clear")?;
+        enabled = ready_again(&*panel, &by, "panel: after clear")?;
         <R as MoveTo<JointSpace<N>>>::move_to(robot, after)
             .map_err(|e| device("panel: after clear", e))?;
     } else {
-        ready_again(&*panel, &by, "panel: after emergency stop")?;
+        enabled = ready_again(&*panel, &by, "panel: after emergency stop")?;
     }
 
     // 3. The device's own emergency stop needs a reset at the device.
@@ -1190,7 +1200,7 @@ where
                 ),
             ));
         }
-        if panel.enable(&by).is_ok() {
+        if matches!(enable(&*panel, &by), Ok(true)) {
             return Err(violation(
                 "panel: enable while held",
                 "enable answered Ok while the device's own emergency stop was engaged",
@@ -1206,10 +1216,10 @@ where
                 format!("clear after the on-site reset answered {cleared:?}"),
             ));
         }
-        ready_again(&*panel, &by, "panel: after reset")?;
+        enabled = ready_again(&*panel, &by, "panel: after reset")?;
     }
 
-    Ok(PanelReport { bound, stop_latency, latched, on_site })
+    Ok(PanelReport { bound, stop_latency, latched, on_site, enable: enabled })
 }
 
 /// The largest difference between two joint vectors.
@@ -1220,12 +1230,23 @@ fn distance<const N: usize>(a: &[f64; N], b: &[f64; N]) -> f64 {
         .fold(0.0, f64::max)
 }
 
+/// Calls `enable`: `Ok(false)` when it answered `Ok` but marked the call as
+/// having no effect ([`note_no_effect`](crate::note_no_effect)).
+fn enable(panel: &dyn Panel, by: &Actor) -> RobotResult<bool> {
+    clear_no_effect();
+    panel.enable(by)?;
+    Ok(!had_no_effect(PanelOp::Enable))
+}
+
 /// `enable` (or `NotSupported`), after which the status must be ready.
-fn ready_again(panel: &dyn Panel, by: &Actor, check: &'static str) -> Result<(), Violation> {
-    match panel.enable(by) {
-        Ok(()) | Err(RobotException::NotSupported { .. }) => {}
+/// Returns what `enable` answered.
+fn ready_again(panel: &dyn Panel, by: &Actor, check: &'static str) -> Result<Outcome, Violation> {
+    let enabled = match enable(panel, by) {
+        Ok(true) => Outcome::Done,
+        Ok(false) => Outcome::NoEffect,
+        Err(RobotException::NotSupported { .. }) => Outcome::NotSupported,
         Err(e) => return Err(device(check, e)),
-    }
+    };
     let status = panel.status().map_err(|e| device(check, e))?;
     if !status.ready() {
         return Err(violation(
@@ -1233,7 +1254,7 @@ fn ready_again(panel: &dyn Panel, by: &Actor, check: &'static str) -> Result<(),
             format!("the device is not ready again: {status:?}"),
         ));
     }
-    Ok(())
+    Ok(enabled)
 }
 
 // Checks for the contracts added in 0.10

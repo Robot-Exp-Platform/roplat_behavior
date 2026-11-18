@@ -11,7 +11,7 @@ can be treated as a reasonably proven `roplat_behavior` implementation.
   - [ ] Safety recovery smoke test
     - Recommended file: `00_01_recovery.rs`
     - Trait: `Panel` (from `HasPanel::panel`)
-    - Expected result: stop a motion from another thread through the panel; latch an emergency stop, show that `enable` fails until `clear`, then `clear` and `enable`; print `status()` after each step. On hardware, also show that `clear` answers `LocalResetRequired` while the device's own emergency-stop button is pressed.
+    - Expected result: stop a motion from another thread through the panel; latch an emergency stop, show that `enable` takes no effect until `clear`, then `clear` and `enable`; print `status()` after each step. On hardware, also show that `clear` answers `LocalResetRequired` while the device's own emergency-stop button is pressed.
 
 - [ ] 01 state reading
   - [ ] Read one full state
