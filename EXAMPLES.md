@@ -10,8 +10,8 @@ can be treated as a reasonably proven `roplat_behavior` implementation.
     - Expected result: print the driver version, connect, run supported lifecycle calls, and exit without motion.
   - [ ] Safety recovery smoke test
     - Recommended file: `00_01_recovery.rs`
-    - Trait: `Robot`
-    - Expected result: demonstrate `stop`, `reset`, or emergency-stop recovery when the driver supports them.
+    - Trait: `Panel` (from `HasPanel::panel`)
+    - Expected result: stop a motion from another thread through the panel; latch an emergency stop, show that `enable` fails until `clear`, then `clear` and `enable`; print `status()` after each step. On hardware, also show that `clear` answers `LocalResetRequired` while the device's own emergency-stop button is pressed.
 
 - [ ] 01 state reading
   - [ ] Read one full state

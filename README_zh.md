@@ -13,7 +13,7 @@
 |---|---|
 | [`roplat_behavior`](roplat_behavior/README_zh.md) | 能力契约（`Robot`、运动空间、控制通道、模型映射；夹爪、力/力矩、IMU 与相机）、机器人状态、以数据表达的运动限值、roplat 适配。 |
 | [`roplat_behavior_ffi`](roplat_behavior_ffi/README_zh.md) | 契约的 Python 与 C++ 绑定，供驱动包使用。 |
-| [`roplat_world`](roplat_world/README_zh.md) | 仿真后端与模型选择、物理引擎、渲染器、世界实体、`SimulationRhythm`。 |
+| [`roplat_world`](roplat_world/README_zh.md) | 仿真后端与模型选择、物理引擎、渲染器、世界实体、`SimulationRhythm`；带面板的仿真臂 `KinematicArm`。 |
 
 **运行机器人。**
 
