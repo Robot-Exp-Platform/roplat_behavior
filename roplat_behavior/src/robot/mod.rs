@@ -15,6 +15,16 @@ pub mod spaces;
 pub mod state;
 pub mod types;
 
+// The panel: stops, enabling and status apart from motion (0.10).
+pub mod panel;
+pub mod panel_log;
+
+// The contracts added in 0.10 (vehicles, battery,
+// segmentation).
+pub mod battery;
+pub mod car;
+pub mod segmentation;
+
 pub use arm::{Arm, ArmState};
 pub use async_control::{AsyncControl, AsyncControlCallback, AsyncControlWith};
 pub use category::{Humanoid, MobileBase, Quadruped, VelocityControlledBase};
@@ -38,8 +48,13 @@ pub use model::{
 };
 pub use motion::{Motion, MotionFile, MoveTo, MoveTraj, Space};
 pub use multirotor::{LandedState, Multirotor, MultirotorState, PositionSetpoint};
+pub use multirotor::{VelocitySetpoint, YawCommand};
+
+pub use battery::{Battery, BatteryFaults, BatteryReading, BatteryStatus};
+pub use car::{CarGeometry, CarLike, SteerCommand};
 pub use observe::{ControlObservation, ControlObserver};
 pub use roplat_msgs::{CartesianLimits, JointLimits, LoadState};
+pub use segmentation::{LabelClass, LabelImage};
 pub use spaces::{
     BasePoseSpace, BaseVelocitySpace, CenterOfMassSpace, CoriolisInputSpace, EndSpace, FlangeSpace,
     FootSpace, GaitCommand, GaitSpace, GravityInputSpace, HandSpace, JacobianSpace, JointSpace,
@@ -51,6 +66,11 @@ pub use state::{
     JointState, MobileBaseState, QuadrupedState, SpatialSample, SpatialState, StateView,
 };
 pub use types::Pose;
+
+pub use panel::{Actor, HasPanel, Panel, PanelStatus, Release, note_no_effect};
+pub use panel_log::{
+    EventBatch, LoggedPanel, Outcome, PANEL_LOG_CAPACITY, PanelEvent, PanelOp, PanelSubscription,
+};
 
 use std::time::Duration;
 
@@ -69,6 +89,11 @@ use crate::{RobotException, RobotResult};
 /// what it actually needs. The exception is
 /// [`emergency_stop`](Robot::emergency_stop), whose default stops and then
 /// reports that it could not latch the stop.
+///
+/// Stopping, emergency-stopping, pausing, resuming, enabling, disabling and
+/// clearing a device are its [`Panel`]'s, which [`HasPanel::panel`] issues and
+/// which works while this value is inside a motion. The seven methods here
+/// that do these are deprecated since 0.10 and go in the next minor version.
 pub trait Robot {
     /// One frame of measured robot state.
     type State;
@@ -105,6 +130,10 @@ pub trait Robot {
 
     /// Engages the actuators so that motion and control calls work, restoring
     /// the power [`disable`](Robot::disable) may have cut.
+    #[deprecated(
+        since = "0.10.0",
+        note = "use `Panel::enable` on the device's panel (`HasPanel::panel`); its default answers `NotSupported`, not `Ok`"
+    )]
     fn enable(&mut self) -> RobotResult<()> {
         Ok(())
     }
@@ -112,6 +141,10 @@ pub trait Robot {
     /// Disengages the actuators. It may cut their power, with the brakes
     /// engaged where the device has them; [`enable`](Robot::enable) restores
     /// it.
+    #[deprecated(
+        since = "0.10.0",
+        note = "use `Panel::disable` on the device's panel (`HasPanel::panel`), which ends a motion in progress; its default answers `NotSupported`, not `Ok`"
+    )]
     fn disable(&mut self) -> RobotResult<()> {
         Ok(())
     }
@@ -132,16 +165,28 @@ pub trait Robot {
     }
 
     /// Stop the current action (recoverable).
+    #[deprecated(
+        since = "0.10.0",
+        note = "use `Panel::stop` on the device's panel (`HasPanel::panel`), which works while a motion runs"
+    )]
     fn stop(&mut self) -> RobotResult<()> {
         Ok(())
     }
 
     /// Pause the current action.
+    #[deprecated(
+        since = "0.10.0",
+        note = "use `Panel::pause` on the device's panel (`HasPanel::panel`), which works while a motion runs; its default answers `NotSupported`, not `Ok`"
+    )]
     fn pause(&mut self) -> RobotResult<()> {
         Ok(())
     }
 
     /// Resume a paused action.
+    #[deprecated(
+        since = "0.10.0",
+        note = "use `Panel::resume` on the device's panel (`HasPanel::panel`); its default answers `NotSupported`, not `Ok`"
+    )]
     fn resume(&mut self) -> RobotResult<()> {
         Ok(())
     }
@@ -156,12 +201,25 @@ pub trait Robot {
     /// less without saying so. The default is such a device: it calls
     /// [`stop`](Robot::stop) and, when that succeeds, returns
     /// `NoEmergencyStop`.
+    #[deprecated(
+        since = "0.10.0",
+        note = "use `Panel::emergency_stop` on the device's panel (`HasPanel::panel`), which works while a motion runs"
+    )]
     fn emergency_stop(&mut self) -> RobotResult<()> {
-        self.stop()?;
+        #[allow(
+            deprecated,
+            reason = "the deprecated default keeps its 0.9 behavior for one version"
+        )]
+        let stopped = self.stop();
+        stopped?;
         Err(RobotException::NoEmergencyStop)
     }
 
     /// Clear a latched emergency stop.
+    #[deprecated(
+        since = "0.10.0",
+        note = "use `Panel::clear` on the device's panel (`HasPanel::panel`); it answers `LocalResetRequired`, never `Ok`, while an on-site stop holds the device"
+    )]
     fn clear_emergency_stop(&mut self) -> RobotResult<()> {
         Ok(())
     }

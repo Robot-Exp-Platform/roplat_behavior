@@ -2,7 +2,7 @@
 
 [English](MIGRATION.md)
 
-0.10 不改变契约的语义，改的是限值、相对运动、控制周期和外语绑定的表达方式，以及各项所在的包。每个包各自定版本。需要带新 `JointLimits` 字段的 `roplat_msgs`；发布之前用 roplat 分支 `claude/msgs-limits`。
+0.10 改了限值、相对运动、控制周期和外语绑定的表达方式，以及各项所在的包。也改了一部分语义：设备的停止、使能与解除从 `Robot` 移到第二个句柄 `Panel`，它的 `pause`、`resume` 缺省答 `NotSupported` 而不是 `Ok`；`enable`、`disable` 缺省什么也不做、答 `Ok`，但把这次调用标记为没有效果（作者 2026-11-18 的裁定）；被取代的 `Robot` 方法仍能编译，标为弃用；`RobotException` 新增 `Stopped` 与 `LocalResetRequired`。新增多旋翼速度设定点、类车辆、电池与分割图的契约，`target_pose` 与镜头函数的行为有变（见“新契约、感知与坐标系”）。每个包各自定版本。需要带新 `JointLimits` 字段的 `roplat_msgs`，roplat main 已有；roplat 发布之前，用 patch 指向 roplat 的检出。
 
 ## 包
 
@@ -66,6 +66,68 @@ to_py = ["dep:pyo3", "dep:roplat_behavior_ffi", "roplat_behavior_ffi/py"]
 ## 世界
 
 `PhysicsEngine`、`AddSearchPath`、`Renderer`、`AttachFrom`、`Entity`、各实体构建 trait、`SimulationBackend`、`select_simulation_model` 与 `SimulationRhythm` 改从 `roplat_world` 引入；`roplat_data_dir()` 改为 `roplat_world::assets_dir()`。`RobotDescription`、`ModelFormat`、`SimulationModel` 仍在 `roplat_behavior`。URDF 的 `Geometry` 可以转换为 `Entity`。
+
+## 面板：停止与使能从运动中分出
+
+设备的停止、使能与状态从 `Robot` 移到第二个句柄 `Panel`。设备经 `HasPanel::panel()` 发出它，类型为 `Arc<dyn Panel>`。它的方法都取 `&self`，所以 `move_to` 占着控制句柄时，服务可以从别的线程停住设备。每个操作写明调用者（`by: &Actor`：`Device`、`Operator(name)`、`Agent(name)`、`App(name)`）。
+
+| 0.9（`Robot` 上，`&mut self`） | 0.10（`Panel` 上，`&self`） |
+|---|---|
+| `robot.stop()` | `panel.stop(&by)`：进行中的运动在 `panel.stop_bound()` 内返回 `Err(Stopped)`；不锁存 |
+| `robot.emergency_stop()` | `panel.emergency_stop(&by)`：只有锁存了才答 `Ok`，否则答 `NoEmergencyStop`，与原来相同 |
+| `robot.clear_emergency_stop()` | `panel.clear(&by) -> PanelStatus`：清除软件可以清除的一切停止，不论是谁引起的；需要现场复位的停止还在时答 `Err(LocalResetRequired)` |
+| `robot.enable()`、`robot.disable()`、`robot.pause()`、`robot.resume()` | `panel.enable(&by)` 等。`pause`、`resume` 缺省答 `NotSupported`，不是 `Ok`。`enable`、`disable` 缺省什么也不做、答 `Ok(())`，与 `Robot` 上的相同（工程风格裁定 27；作者 2026-11-18 定为暂时保留，条件是调用要说明自己没有起作用）：缺省会调 `note_no_effect`，`LoggedPanel` 记 `Outcome::NoEffect`。不经 `LoggedPanel`、直接调用面板的调用方只得到一个无声的 `Ok(())`；提醒就是 `LoggedPanel` 记下、由服务回报的 `Outcome::NoEffect`。设备能使能、去使能的驱动覆写这两个；有意什么也不做的驱动自己调 `note_no_effect(PanelOp::Enable)` 或 `(PanelOp::Disable)` |
+| 无 | `panel.status() -> PanelStatus`：`enabled`、`paused`、`software_estop`、`device_estop`、`protective_stop`（后两个取 `Release::Clear` 或 `Release::OnSite`） |
+
+`Robot` 的 `stop`、`emergency_stop`、`clear_emergency_stop`、`enable`、`disable`、`pause`、`resume` 在 0.10 里照常可用，标为弃用，下一个小版本删除。覆写它们的驱动编译时没有警告；调用它们的代码会有弃用警告，`-D warnings` 下即为错误。`init`、`shutdown`、`reset`、`is_moving`、`waiting_for_finish` 仍留在 `Robot` 上。
+
+**驱动**在一个与驱动共享状态的小值上实现 `Panel`，在驱动上实现 `HasPanel`：
+
+```rust
+impl HasPanel for MyArm {
+    fn panel(&self) -> Arc<dyn Panel> {
+        Arc::new(MyPanel { shared: Arc::clone(&self.shared) })
+    }
+}
+```
+
+- 控制器有第二个通道（dashboard 端口、第二个现场总线客户端）的，停止从那里发。
+- 运动是本进程里循环的驱动，共享一个停止计数，循环每周期检查，变了就返回 `Err(RobotException::Stopped)`；参照是 `roplat_world::KinematicArm`。
+- 厂商的阻塞调用中途无法打断的，`stop` 答 `NotSupported`，文档写明。
+- `stop_bound()` 是设备结束运动并静止所需的时间，含减速，以及一个周期内最长的等待。
+- `status()` 从设备读：软件急停指经 `emergency_stop` 要求的急停；设备自己的按钮或安全回路是 `device_estop`，通常为 `Release::OnSite`；设备为保护自己而停是 `protective_stop`。
+
+在驱动的测试里跑 `conformance::check_panel(&mut robot, &check, joints, press)`：它从另一个线程停住运动并检查停止时限；检查急停在 `clear` 之前一直有效、`enable` 在此之前不起作用（缺省的 `enable` 答 `Ok` 并标记为没有效果；报告的 `enable` 字段写明是哪一种）；`press` 能按下设备自己的急停时，检查 `clear` 答 `LocalResetRequired`。
+
+**服务**（MCP、Web、控制台）在把机器人交给运动线程之前取 `robot.panel()`，不再另用一个 `Robot` 值来停止。谁可以做哪个恢复操作由服务定，面板不管。要留记录，就把面板包一层，发出去的是包装：
+
+```rust
+let log = Arc::new(LoggedPanel::new(robot.panel()));
+let for_agent: Arc<dyn Panel> = log.clone();
+let mut news = log.subscribe();           // news.next(timeout) -> EventBatch
+let last_ten = log.recent(10);            // PanelEvent { seq, at, by, op, outcome, after }
+```
+
+`LoggedPanel` 记下每个操作的调用者与回答；经它读状态时发现的、没有任何经它的操作能解释的状态变化，记为 `Actor::Device`／`PanelOp::Changed`。事件可用 serde 序列化。
+
+新的错误：`RobotException::Stopped`（停止结束了运动，或拒绝了这次调用）与 `RobotException::LocalResetRequired`。穷举匹配 `RobotException` 的代码要补上这两项。
+
+## 新契约、感知与坐标系
+
+这些新增不影响现有代码编译；签名有变的地方，除特别说明外，原来的调用照样能编译。
+
+- **多旋翼速度设定点**：`Multirotor::send_velocity(VelocitySetpoint { velocity, yaw, duration })`。`velocity` 单位 m/s，沿位置设定点所用世界系的东、北、天三轴；`yaw` 为 `YawCommand::Hold`、`Angle(rad)` 或 `Rate(rad/s)`（绕天向逆时针）；`duration` 是没有新设定点时这一个保持多久。缺省答 `NotSupported`，没实现的驱动照样能编译；能发速度的驱动覆盖它，并先调用 `setpoint.validate()?`。
+- **类车底盘**：靠前轮转向的载具实现 `CarLike`：`geometry()`（`CarGeometry { wheelbase, max_steering_angle, max_steering_rate }`）与 `drive(SteerCommand { speed, steering_angle })`。速度是后轴中点的速度，转角是自行车模型前轮的转角，左为正。超过 `max_steering_angle` 的指令按载具能转到的最大角执行（`CarGeometry::clamp`）；非有限值的指令拒绝（`SteerCommand::validate`）。它不取代 `MobileBase`，能原地转向的底盘仍用后者。`conformance::check_car_like` 检查几何参数与拒绝行为。
+- **电池**：读取电池包的类型实现 `Battery::read_battery() -> Stamped<BatteryReading>`。各量都是 `Option`；电流放电为正，电量是 `[0, 1]` 的比例，温度单位 °C，`faults` 是 `BatteryFaults` 集合。设备把放电电流报为负、或按百分比报电量的，由驱动换算。`conformance::check_battery` 检查单位，以及电流符号与状态是否一致。
+- **分割图**：给像素打标签的相机，在帧类型里放一个 `Option<LabelImage>`（`width`、`height`、逐行的 `ids`、为每个 id 命名的 `classes`，没有标签的像素为 `LabelImage::UNLABELLED`），与它所标注的图像放在一起。用 `conformance::check_segmentation(camera, advance, frames, |frame| frame.labels.as_ref())` 检查。
+- **关节点动**：`roplat_control::joint_jog_control`、`JogMapping`、`JogInput` 即 roplat_web 的 `jog_control` 及其类型。`JogMapping::new(speeds, accelerations, enable_button)` 要显式给出使能按键；roplat_web 原来固定为页面的第 0 位，传 `Some(0)` 行为不变。
+- **物体观测**：`roplat_perception::ObjectObservation`（及 `PixelBox`、`ObjectMask`）是检测、分割、标记识别与融合报告物体时共用的类型。写法：`ObjectObservation { score, pixel_box, ..ObjectObservation::new(class, stamp, frame) }`。
+- **坐标系**：`FrameTree::edges()` 与 `edge(child)` 列出每个坐标系的放置方式；`FrameTree::set_fixed` 与 `FrameBuffer::set_fixed` 就地替换固定边的位姿。新增 `so3`（指数、对数、Jacobian）与 `twist`（adjoint、旋量与力旋量的变换）两个模块。
+- **镜头与标定板位姿**，行为有变：
+  - `target::target_pose` 改为返回 `Result<TargetPose, TargetPoseError>`（`.unwrap()`、`.ok()` 照样可用），并计入镜头：原始角点配相机自己的 `CameraInfo`；校正后图像上的角点照旧配 `lens::rectified(info)`。
+  - 镜头函数拒绝 `d[5..8]` 有非零值的 `PLUMB_BOB` 相机（ROS 与 OpenCV 的 plumb_bob 只有 5 个系数，这样的相机应写成 `RATIONAL_POLYNOMIAL`）、`d[4..8]` 有非零值的 `EQUIDISTANT` 相机，以及非有限的系数。
+  - 相机矩阵的斜切 `k[1]` 现在计入（`u = fx x + s y + cx`），与 `Camera` 契约的定义一致；以前忽略。
+  - 新增：`lens::project`、`lens::ray`、`Rectify::onto`（换相机矩阵与尺寸）、`Rectify::info`、`Rectify::mask`；`target::Chessboard::render`。
 
 
 # 从 robot_behavior 0.8 迁移到 roplat_behavior 0.9

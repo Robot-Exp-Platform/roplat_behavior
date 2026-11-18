@@ -13,7 +13,7 @@
 |---|---|
 | [`roplat_behavior`](roplat_behavior/README.md) | Capability contracts (`Robot`, motion spaces, control channels, model maps; gripper, force/torque, IMU and camera), robot state, motion limits as data, roplat adapters. |
 | [`roplat_behavior_ffi`](roplat_behavior_ffi/README.md) | Python and C++ bindings of the contracts for driver packages. |
-| [`roplat_world`](roplat_world/README.md) | Simulator backends and model selection, physics engines, renderers, world entities, `SimulationRhythm`. |
+| [`roplat_world`](roplat_world/README.md) | Simulator backends and model selection, physics engines, renderers, world entities, `SimulationRhythm`; `KinematicArm`, a simulated arm with a panel. |
 
 **Running a robot.**
 

@@ -9,8 +9,8 @@
     - 期望结果：打印驱动版本，连接机器人，执行驱动支持的生命周期调用，并且不产生运动。
   - [ ] 安全恢复冒烟测试
     - 推荐文件名：`00_01_recovery.rs`
-    - 对应 trait：`Robot`
-    - 期望结果：在驱动支持时演示 `stop`、`reset` 或急停恢复语义。
+    - 对应 trait：`Panel`（由 `HasPanel::panel` 取得）
+    - 期望结果：经面板从另一个线程停止运动；锁存急停，演示 `clear` 之前 `enable` 不起作用，再 `clear` 与 `enable`；每步之后打印 `status()`。真机上再演示：设备自己的急停按钮按下时，`clear` 答 `LocalResetRequired`。
 
 - [ ] 01 状态读取
   - [ ] 读取一次完整状态

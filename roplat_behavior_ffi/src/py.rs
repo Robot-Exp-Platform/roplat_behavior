@@ -342,11 +342,19 @@ macro_rules! py_robot {
                     .map_err($crate::py_err)
             }
 
+            #[allow(
+                deprecated,
+                reason = "binds the deprecated `Robot` method for one more version"
+            )]
             fn enable(&mut self) -> pyo3::PyResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::enable(&mut self.0)
                     .map_err($crate::py_err)
             }
 
+            #[allow(
+                deprecated,
+                reason = "binds the deprecated `Robot` method for one more version"
+            )]
             fn disable(&mut self) -> pyo3::PyResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::disable(&mut self.0)
                     .map_err($crate::py_err)
@@ -362,21 +370,37 @@ macro_rules! py_robot {
                     .map_err($crate::py_err)
             }
 
+            #[allow(
+                deprecated,
+                reason = "binds the deprecated `Robot` method for one more version"
+            )]
             fn stop(&mut self) -> pyo3::PyResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::stop(&mut self.0)
                     .map_err($crate::py_err)
             }
 
+            #[allow(
+                deprecated,
+                reason = "binds the deprecated `Robot` method for one more version"
+            )]
             fn pause(&mut self) -> pyo3::PyResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::pause(&mut self.0)
                     .map_err($crate::py_err)
             }
 
+            #[allow(
+                deprecated,
+                reason = "binds the deprecated `Robot` method for one more version"
+            )]
             fn resume(&mut self) -> pyo3::PyResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::resume(&mut self.0)
                     .map_err($crate::py_err)
             }
 
+            #[allow(
+                deprecated,
+                reason = "binds the deprecated `Robot` method for one more version"
+            )]
             fn emergency_stop(&mut self) -> pyo3::PyResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::emergency_stop(&mut self.0)
                     .map_err($crate::py_err)
@@ -389,6 +413,10 @@ macro_rules! py_robot {
                 .map_err($crate::py_err)
             }
 
+            #[allow(
+                deprecated,
+                reason = "binds the deprecated `Robot` method for one more version"
+            )]
             fn clear_emergency_stop(&mut self) -> pyo3::PyResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::clear_emergency_stop(
                     &mut self.0,

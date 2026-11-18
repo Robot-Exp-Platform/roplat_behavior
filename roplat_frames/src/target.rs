@@ -26,13 +26,19 @@
 //!    from every view; with an even sum it is fixed only up to a half turn.
 //!
 //! [`target_pose`] then solves the perspective-n-point problem for the
-//! planar board: a homography gives the first pose, refined by
-//! Levenberg–Marquardt on the reprojection error.
+//! planar board through the camera's lens: a homography between the board
+//! and the undistorted rays of its pixels gives the first pose, refined by
+//! Levenberg–Marquardt on the reprojection error in the raw image, where
+//! the corners were measured. A camera with distortion needs nothing done
+//! to the corners first.
 //!
-//! Images must be rectified: lens distortion is not modelled here. Rectify
-//! raw images with [`lens::Rectify`](crate::lens::Rectify) first, or
-//! undistort the detected corners with [`lens::undistort`](crate::lens::undistort)
-//! and solve the pose with [`lens::rectified`](crate::lens::rectified)`(info)`.
+//! The detector itself works on the image it is given. It finds corners in
+//! raw images with moderate distortion; for strong distortion, rectify the
+//! image with [`lens::Rectify`](crate::lens::Rectify) first and solve the
+//! pose with the rectified camera, [`Rectify::info`](crate::lens::Rectify::info).
+//!
+//! [`Chessboard::render`] draws a board to print, in the order and colours
+//! the detector expects.
 //!
 //! ```
 //! use roplat_frames::target::Chessboard;
@@ -45,6 +51,8 @@
 
 use nalgebra as na;
 use roplat_msgs::CameraInfo;
+
+use crate::{image::Image, lens::Lens};
 
 /// A chessboard by its inner corners, where four squares meet.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,6 +75,31 @@ impl Chessboard {
                     .map(move |i| [i as f64 * self.square, j as f64 * self.square, 0.0])
             })
             .collect()
+    }
+
+    /// The board as a grey image to print: `columns + 1` squares across and
+    /// `rows + 1` down, `square_pixels` pixels each, the top-left square
+    /// black, inside `margin` pixels of white. Inner corner `(i, j)` is at
+    /// pixel `margin + (i + 1) square_pixels - 0.5` across and likewise
+    /// down, and [`detect_chessboard`] finds it as corner `j * columns + i`
+    /// when the board is seen the right way up. `None` for a board with
+    /// fewer than two corners either way, or a square of no pixels.
+    pub fn render(&self, square_pixels: usize, margin: usize) -> Option<Image> {
+        if self.columns < 2 || self.rows < 2 || square_pixels == 0 {
+            return None;
+        }
+        let (across, down) = (self.columns + 1, self.rows + 1);
+        let width = across * square_pixels + 2 * margin;
+        let height = down * square_pixels + 2 * margin;
+        let mut data = vec![255u8; width * height];
+        for y in 0..down * square_pixels {
+            for x in 0..across * square_pixels {
+                if (x / square_pixels + y / square_pixels) % 2 == 0 {
+                    data[(y + margin) * width + x + margin] = 0;
+                }
+            }
+        }
+        Image::new(width, height, 1, data).ok()
     }
 }
 
@@ -126,23 +159,89 @@ pub struct TargetPose {
     pub rms: f64,
 }
 
+/// Why [`target_pose`] found no pose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum TargetPoseError {
+    #[error("{pixels} pixels for {points} target points")]
+    Mismatch { pixels: usize, points: usize },
+    #[error("{0} points; a pose needs at least four")]
+    TooFewPoints(usize),
+    #[error("target point {0} is off the plane z = 0")]
+    OffPlane(usize),
+    /// The camera's intrinsics or lens model are ones `lens` refuses.
+    #[error("the camera's intrinsics or lens model cannot be used")]
+    Camera,
+    /// Pixel `k` lies where no ray of the lens lands.
+    #[error("pixel {0} is not seen through the lens")]
+    NoRay(usize),
+    /// The points determine no pose: the target's points all on one line,
+    /// or a view from which no pose reprojects them.
+    #[error("the points determine no pose")]
+    Degenerate,
+}
+
 /// The pose of a planar target from where its points appear: `pixels[k]`
-/// is where `object[k]` (in the target frame, all with `z = 0`) appears,
-/// through `info`'s pinhole intrinsics. `None` for fewer than four points,
-/// points off the plane, or a view that determines no pose.
+/// is where `object[k]` (in the target frame, all with `z = 0`) appears in
+/// the raw image of the camera `info` describes, lens distortion included;
+/// pass [`lens::rectified`](crate::lens::rectified)`(info)` for pixels of a
+/// rectified image. The `rms` is the reprojection error in those pixels.
 pub fn target_pose(
     pixels: &[[f64; 2]],
     object: &[[f64; 3]],
     info: &CameraInfo,
-) -> Option<TargetPose> {
-    if pixels.len() != object.len() || pixels.len() < 4 || object.iter().any(|p| p[2].abs() > 1e-9)
-    {
-        return None;
+) -> Result<TargetPose, TargetPoseError> {
+    if pixels.len() != object.len() {
+        return Err(TargetPoseError::Mismatch { pixels: pixels.len(), points: object.len() });
     }
-    let camera = Pinhole::new(info)?;
-    let initial = homography_pose(pixels, object, &camera)?;
-    let (pose, rms) = refine_pose(initial, pixels, object, &camera);
-    (rms.is_finite()).then_some(TargetPose { pose, rms })
+    if pixels.len() < 4 {
+        return Err(TargetPoseError::TooFewPoints(pixels.len()));
+    }
+    if let Some(k) = object
+        .iter()
+        .position(|p| p[2].is_nan() || p[2].abs() > 1e-9)
+    {
+        return Err(TargetPoseError::OffPlane(k));
+    }
+    if collinear(object) {
+        return Err(TargetPoseError::Degenerate);
+    }
+    let lens = Lens::new(info).ok_or(TargetPoseError::Camera)?;
+    let rays = pixels
+        .iter()
+        .enumerate()
+        .map(|(k, &p)| {
+            lens.undistort(lens.normalise(p))
+                .map(|[x, y]| na::Point2::new(x, y))
+                .ok_or(TargetPoseError::NoRay(k))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let initial = homography_pose(&rays, object).ok_or(TargetPoseError::Degenerate)?;
+    let (pose, rms) = refine_pose(initial, pixels, object, &lens);
+    if rms.is_finite() {
+        Ok(TargetPose { pose, rms })
+    } else {
+        Err(TargetPoseError::Degenerate)
+    }
+}
+
+/// Whether the target's points lie on one line (or in one place), where a
+/// line of pixels fits a whole family of poses: the smaller spread of their
+/// 2 x 2 covariance is a negligible share of the larger.
+fn collinear(object: &[[f64; 3]]) -> bool {
+    let n = object.len() as f64;
+    let (mx, my) = object
+        .iter()
+        .fold((0.0, 0.0), |(x, y), p| (x + p[0] / n, y + p[1] / n));
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for p in object {
+        let (dx, dy) = (p[0] - mx, p[1] - my);
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+    }
+    let trace = sxx + syy;
+    // The eigenvalues' product against the larger one squared.
+    trace.is_nan() || trace <= 0.0 || sxx * syy - sxy * sxy <= 1e-12 * trace * trace
 }
 
 /// An 8-bit image as floats, read with clamping at the border.
@@ -449,44 +548,11 @@ fn order(
     Some(cells.into_iter().flatten().map(|p| [p.x, p.y]).collect())
 }
 
-/// Pinhole intrinsics.
-struct Pinhole {
-    fx: f64,
-    fy: f64,
-    cx: f64,
-    cy: f64,
-}
-
-impl Pinhole {
-    fn new(info: &CameraInfo) -> Option<Self> {
-        let (fx, fy, cx, cy) = (info.k[0], info.k[4], info.k[2], info.k[5]);
-        (fx > 0.0 && fy > 0.0).then_some(Self { fx, fy, cx, cy })
-    }
-
-    fn project(&self, p: &na::Point3<f64>) -> Option<na::Point2<f64>> {
-        (p.z > 1e-9)
-            .then(|| na::Point2::new(self.fx * p.x / p.z + self.cx, self.fy * p.y / p.z + self.cy))
-    }
-}
-
 /// The pose from the homography between the board plane and the
-/// normalised image (Zhang's decomposition).
-fn homography_pose(
-    pixels: &[[f64; 2]],
-    object: &[[f64; 3]],
-    camera: &Pinhole,
-) -> Option<na::Isometry3<f64>> {
-    let image: Vec<na::Point2<f64>> = pixels
-        .iter()
-        .map(|p| {
-            na::Point2::new(
-                (p[0] - camera.cx) / camera.fx,
-                (p[1] - camera.cy) / camera.fy,
-            )
-        })
-        .collect();
+/// undistorted normalised image (Zhang's decomposition).
+fn homography_pose(image: &[na::Point2<f64>], object: &[[f64; 3]]) -> Option<na::Isometry3<f64>> {
     let plane: Vec<na::Point2<f64>> = object.iter().map(|p| na::Point2::new(p[0], p[1])).collect();
-    let (ti, image) = normalise(&image)?;
+    let (ti, image) = normalise(image)?;
     let (tp, plane) = normalise(&plane)?;
     // Direct linear transform: the null vector of the stacked equations.
     let mut ata = na::SMatrix::<f64, 9, 9>::zeros();
@@ -574,20 +640,25 @@ fn normalise(points: &[na::Point2<f64>]) -> Option<(na::Matrix3<f64>, Vec<na::Po
     Some((transform, moved))
 }
 
-/// Levenberg–Marquardt on the reprojection error, from `pose`; returns the
-/// refined pose and its RMS error (px).
+/// Levenberg–Marquardt on the reprojection error through the lens, from
+/// `pose`; returns the refined pose and its RMS error (px).
 fn refine_pose(
     mut pose: na::Isometry3<f64>,
     pixels: &[[f64; 2]],
     object: &[[f64; 3]],
-    camera: &Pinhole,
+    lens: &Lens,
 ) -> (na::Isometry3<f64>, f64) {
     let residuals = |pose: &na::Isometry3<f64>| -> Option<na::DVector<f64>> {
         let mut r = na::DVector::zeros(2 * pixels.len());
         for (k, (pixel, point)) in pixels.iter().zip(object).enumerate() {
-            let seen = camera.project(&(pose * na::Point3::from(*point)))?;
-            r[2 * k] = seen.x - pixel[0];
-            r[2 * k + 1] = seen.y - pixel[1];
+            let p = pose * na::Point3::from(*point);
+            // A point on the optical centre's plane or behind it has no pixel.
+            if p.z <= 1e-9 {
+                return None;
+            }
+            let seen = lens.project([p.x, p.y, p.z])?;
+            r[2 * k] = seen[0] - pixel[0];
+            r[2 * k + 1] = seen[1] - pixel[1];
         }
         Some(r)
     };

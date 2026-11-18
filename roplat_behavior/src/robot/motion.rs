@@ -24,7 +24,9 @@ pub trait Space {
 /// limits).
 pub trait MoveTo<S: Space>: Robot {
     /// Command the robot to reach `target`, returning when the motion has
-    /// finished or failed.
+    /// finished or failed. A stop through the device's
+    /// [`Panel`](crate::Panel) ends it with
+    /// [`Stopped`](RobotException::Stopped).
     fn move_to(&mut self, target: S::Value) -> RobotResult<()>;
 
     /// Asynchronous target motion. The returned future is inert until the

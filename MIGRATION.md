@@ -2,7 +2,7 @@
 
 [简体中文](MIGRATION_zh.md)
 
-0.10 keeps the contracts' semantics and changes how limits, relative motion, periods and foreign bindings are expressed, and which crate holds what. Each crate now has its own version. Needs `roplat_msgs` with the new `JointLimits` fields (roplat branch `claude/msgs-limits` until it is released).
+0.10 changes how limits, relative motion, periods and foreign bindings are expressed, and which crate holds what. It also changes some semantics: stopping, enabling and clearing a device move from `Robot` to a second handle, the `Panel`, whose `pause` and `resume` default to `NotSupported` rather than `Ok`, while `enable` and `disable` default to doing nothing and answering `Ok` but mark the call as having had no effect (the author's ruling of 2026-11-18); the `Robot` methods they replace still compile and are deprecated; and `RobotException` gains `Stopped` and `LocalResetRequired`. New contracts cover multirotor velocity setpoints, car-like vehicles, batteries and segmentation images, and `target_pose` and the lens functions change behaviour (see "New contracts, perception and frames"). Each crate now has its own version. Needs `roplat_msgs` with the new `JointLimits` fields, which roplat main has; until roplat is released, patch it to a roplat checkout.
 
 ## Crates
 
@@ -66,6 +66,68 @@ Import the macros and classes from `roplat_behavior_ffi`. Code of your own that 
 ## World
 
 `PhysicsEngine`, `AddSearchPath`, `Renderer`, `AttachFrom`, `Entity`, the entity builders, `SimulationBackend`, `select_simulation_model` and `SimulationRhythm` are imported from `roplat_world`; `roplat_data_dir()` is `roplat_world::assets_dir()`. `RobotDescription`, `ModelFormat` and `SimulationModel` stay in `roplat_behavior`. A URDF `Geometry` converts into an `Entity`.
+
+## The panel: stopping and enabling apart from motion
+
+A device's stops, enabling and status move from `Robot` to a second handle, the `Panel`, which the device issues with `HasPanel::panel()` as an `Arc<dyn Panel>`. Its methods take `&self`, so a service can stop a device from another thread while `move_to` holds the control handle. Every operation names its caller (`by: &Actor`: `Device`, `Operator(name)`, `Agent(name)`, `App(name)`).
+
+| 0.9 (`&mut self` on `Robot`) | 0.10 (`&self` on `Panel`) |
+|---|---|
+| `robot.stop()` | `panel.stop(&by)`: a motion in progress returns `Err(Stopped)` within `panel.stop_bound()`; nothing latches |
+| `robot.emergency_stop()` | `panel.emergency_stop(&by)`: `Ok` only when latched, else `NoEmergencyStop`, as before |
+| `robot.clear_emergency_stop()` | `panel.clear(&by) -> PanelStatus`: releases every stop software may release, whoever caused it; `Err(LocalResetRequired)` while a stop that needs an on-site reset holds the device |
+| `robot.enable()`, `robot.disable()`, `robot.pause()`, `robot.resume()` | `panel.enable(&by)` and so on. `pause` and `resume` default to `NotSupported`, not `Ok`. `enable` and `disable` default to doing nothing and answering `Ok(())`, as `Robot`'s do (engineering-style ruling 27; the author kept this for now on 2026-11-18, on condition that the call says it did nothing): the defaults call `note_no_effect`, and `LoggedPanel` records `Outcome::NoEffect`. A caller that uses the panel directly, not through `LoggedPanel`, gets a silent `Ok(())`; the notice is the `Outcome::NoEffect` that `LoggedPanel` records, which the services report. A driver whose device can be enabled or disabled overrides both; one whose `enable` or `disable` deliberately does nothing calls `note_no_effect(PanelOp::Enable)` or `(PanelOp::Disable)` itself |
+| none | `panel.status() -> PanelStatus`: `enabled`, `paused`, `software_estop`, `device_estop`, `protective_stop` (the last two with `Release::Clear` or `Release::OnSite`) |
+
+`Robot::stop`, `emergency_stop`, `clear_emergency_stop`, `enable`, `disable`, `pause` and `resume` still work in 0.10 and are deprecated; they go in the next minor version. A driver that overrides them compiles without warnings; code that calls them gets a deprecation warning, which `-D warnings` turns into an error. `init`, `shutdown`, `reset`, `is_moving` and `waiting_for_finish` stay on `Robot`.
+
+**A driver** implements `Panel` on a small value sharing state with the driver, and `HasPanel` on the driver:
+
+```rust
+impl HasPanel for MyArm {
+    fn panel(&self) -> Arc<dyn Panel> {
+        Arc::new(MyPanel { shared: Arc::clone(&self.shared) })
+    }
+}
+```
+
+- A controller with a second channel (a dashboard port, a second fieldbus client) sends the stop there.
+- A driver whose motion is a loop in its own process shares a stop counter that the loop checks every cycle and returns `Err(RobotException::Stopped)` when it changes; `roplat_world::KinematicArm` is the reference.
+- A blocking vendor call that cannot be interrupted: `stop` answers `NotSupported` and the docs say so.
+- `stop_bound()` is what the device needs to end a motion and come to rest, including deceleration and the longest wait inside one cycle.
+- `status()` reads the device: a software emergency stop is one asked for through `emergency_stop`; the device's own button or safety circuit is `device_estop`, usually `Release::OnSite`; a stop the device made to protect itself is `protective_stop`.
+
+Run `conformance::check_panel(&mut robot, &check, joints, press)` in the driver's tests: it stops a motion from another thread and holds the driver to its bound, checks that an emergency stop holds until `clear` and that `enable` takes no effect before it (a default `enable` answers `Ok` marked as no effect; the report's `enable` field says which), and, when `press` can engage the device's own emergency stop, that `clear` answers `LocalResetRequired`.
+
+**A service** (MCP, web, console) takes `robot.panel()` before handing the robot to its motion thread, instead of a second `Robot` value for stopping. It decides who may use which recovery operation; the panel does not. To keep a record, wrap the panel once and hand out the wrapper:
+
+```rust
+let log = Arc::new(LoggedPanel::new(robot.panel()));
+let for_agent: Arc<dyn Panel> = log.clone();
+let mut news = log.subscribe();           // news.next(timeout) -> EventBatch
+let last_ten = log.recent(10);            // PanelEvent { seq, at, by, op, outcome, after }
+```
+
+`LoggedPanel` records each operation with its caller and answer, and a change of status that no operation through it explains as `Actor::Device` / `PanelOp::Changed`, noticed when the status is read through it. Events serialize with serde.
+
+New errors: `RobotException::Stopped` (a stop ended the motion or refused the call) and `RobotException::LocalResetRequired`. Code that matches `RobotException` exhaustively adds them.
+
+## New contracts, perception and frames
+
+These additions keep existing code compiling; where a signature changed, the old calls still compile unless noted.
+
+- **Multirotor velocity setpoints.** `Multirotor::send_velocity(VelocitySetpoint { velocity, yaw, duration })`: `velocity` in m/s along the world east, north and up axes of position setpoints, `yaw` one of `YawCommand::Hold`, `Angle(rad)` or `Rate(rad/s)` (counter-clockwise about up), and `duration` how long the setpoint holds without another. It defaults to `NotSupported`, so a driver without it still builds; a driver that sends velocities overrides it and calls `setpoint.validate()?` first.
+- **Car-like vehicles.** A vehicle steered by its front wheels implements `CarLike`: `geometry()` (`CarGeometry { wheelbase, max_steering_angle, max_steering_rate }`) and `drive(SteerCommand { speed, steering_angle })`, the speed of the rear axle's midpoint and the bicycle model's front-wheel angle, left positive. A command beyond `max_steering_angle` steers as far as the vehicle can (`CarGeometry::clamp`); a command that is not finite is refused (`SteerCommand::validate`). It does not replace `MobileBase`, which stays for bases that turn on the spot. `conformance::check_car_like` checks the geometry and the refusal.
+- **Batteries.** A type that reads a pack implements `Battery::read_battery() -> Stamped<BatteryReading>`. Every quantity is an `Option`; the current is positive while the pack discharges, the state of charge a share in `[0, 1]`, the temperature in °C, `faults` a `BatteryFaults` set. A driver whose device reports discharge current as negative, or percent, converts. `conformance::check_battery` checks the units and the sign against the status.
+- **Segmentation images.** A camera that labels pixels gives its frame type an `Option<LabelImage>` (`width`, `height`, `ids` row by row, `classes` naming each id, `LabelImage::UNLABELLED` for nothing labelled) beside the image it labels. `conformance::check_segmentation(camera, advance, frames, |frame| frame.labels.as_ref())` checks it.
+- **Joint jogging.** `roplat_control::joint_jog_control`, `JogMapping` and `JogInput` are roplat_web's `jog_control` and its types. `JogMapping::new(speeds, accelerations, enable_button)` takes the dead-man button, which roplat_web's version fixed to its page's bit 0: pass `Some(0)` for the same behaviour.
+- **Object observations.** `roplat_perception::ObjectObservation` (with `PixelBox` and `ObjectMask`) is the type a detector, segmenter, marker reader or fusion step reports an object in. Build one with `ObjectObservation { score, pixel_box, ..ObjectObservation::new(class, stamp, frame) }`.
+- **Frames.** `FrameTree::edges()` and `edge(child)` list how each frame is placed; `FrameTree::set_fixed` and `FrameBuffer::set_fixed` replace a fixed edge's pose in place. `so3` (exponential, logarithm, Jacobians) and `twist` (adjoint, twist and wrench transforms) are new modules.
+- **Lens and target pose.** Changed behaviour:
+  - `target::target_pose` returns `Result<TargetPose, TargetPoseError>` instead of an `Option` (`.unwrap()` and `.ok()` still work) and models the lens: pass the camera's own `CameraInfo` with the raw corners, or `lens::rectified(info)` with corners of a rectified image as before.
+  - The lens functions refuse a `PLUMB_BOB` camera with any of `d[5..8]` set (ROS and OpenCV define five coefficients; such a camera is `RATIONAL_POLYNOMIAL`), an `EQUIDISTANT` one with any of `d[4..8]` set, and coefficients that are not finite.
+  - The camera matrix's skew `k[1]` is now modelled (`u = fx x + s y + cx`), as the `Camera` contract defines it; before, it was ignored.
+  - New: `lens::project`, `lens::ray`, `Rectify::onto` (another camera matrix and size), `Rectify::info` and `Rectify::mask`; `target::Chessboard::render`.
 
 
 # Migrating from robot_behavior 0.8 to roplat_behavior 0.9

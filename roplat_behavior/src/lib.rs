@@ -2,7 +2,9 @@
 //!
 //! Drivers implement [`Robot`] plus the motion ([`MoveTo`], [`MoveTraj`]) and
 //! control ([`ControlWith`], [`AsyncControlWith`]) traits for the spaces and
-//! channels they support; applications program against those traits. Sample and
+//! channels they support; applications program against those traits. A device's
+//! stops, enabling and status are its [`Panel`] ([`HasPanel`]), callable while
+//! it moves; [`LoggedPanel`] records who used it. Sample and
 //! geometry types come from [`msgs`] (`roplat_msgs`). Kinematics, controllers
 //! and trajectories live in `roplat_kinematics`, `roplat_control` and
 //! `roplat_trajectory`; simulators, physics engines and renderers in
@@ -48,6 +50,18 @@ pub mod behavior {
     };
 
     pub use crate::simulation::{ModelFormat, SimulationModel};
+
+    // The panel: stops, enabling and status apart from motion (0.10).
+    pub use crate::robot::{
+        Actor, HasPanel, LoggedPanel, Outcome, Panel, PanelEvent, PanelOp, PanelStatus, Release,
+        note_no_effect,
+    };
+
+    // The other contracts added in 0.10.
+    pub use crate::robot::{
+        Battery, BatteryFaults, BatteryReading, BatteryStatus, CarGeometry, CarLike, LabelClass,
+        LabelImage, SteerCommand, VelocitySetpoint, YawCommand,
+    };
 }
 
 pub mod driver {

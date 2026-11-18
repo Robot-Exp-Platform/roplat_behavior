@@ -9,6 +9,8 @@ Part of the [roplat_behavior workspace](../README.md), whose other crates hold t
 ## Contents
 
 - Capability contracts: `Robot`, motion spaces, control channels and model maps; gripper, force/torque, IMU and camera contracts.
+- The panel (`Panel`, `HasPanel`): stopping, enabling and clearing a device from any thread while it moves; `LoggedPanel` records who did what.
+- Vehicle and power contracts: multirotor position and velocity setpoints (`Multirotor`, `VelocitySetpoint`), car-like vehicles (`CarLike`), batteries (`Battery`), and the segmentation image a camera frame carries (`LabelImage`).
 - Arm, base and legged state.
 - Motion limits as data (`MotionLimits`, `with_limits`) and relative motion (`Relative<S>`).
 - Contract checks for driver tests (feature `conformance`) and roplat adapters (feature `roplat`).
@@ -30,6 +32,11 @@ The driver owns transport, timing, state acquisition, and session termination. Y
 | Await a complete control session | `AsyncControl::control_native_async::<S, _>` | `AsyncControlWith<S>` |
 | Read a backend's native state | `Robot::read_state` | `Robot` |
 | Work with arm state or a model | `Arm<N>`, `SpaceMap` and model traits | Only the supported capabilities |
+| Stop, pause, enable or clear the device while it moves, from any thread | `HasPanel::panel()`, then `Panel` (`LoggedPanel` records who did what) | `Panel`, `HasPanel` |
+| Fly a multirotor at a velocity | `Multirotor::send_velocity` | `Multirotor` (default `NotSupported`) |
+| Drive a car-like vehicle | `CarLike::drive`, `CarLike::geometry` | `CarLike` |
+| Read a battery | `Battery::read_battery` | `Battery` |
+| Read which object each pixel sees | `LabelImage` in the camera's frame | The frame type carries an `Option<LabelImage>` |
 
 ## First example: a complete program without a robot
 
@@ -133,6 +140,8 @@ The creating scope manages node and robot lifecycle. `MotionNode` declares `Reso
 ## Writing a driver
 
 Driver authors can import `roplat_behavior::driver::*`; applications can import `roplat_behavior::behavior::*`. Implement the device's lifecycle and state in `Robot`, then each supported motion/control/model capability. Default lifecycle hooks are no-ops and some unimplemented operations return errors; inheriting a default is not an implementation of device behavior.
+
+A device whose motion can be stopped from outside implements `HasPanel` and a `Panel`: a second connection to the controller (a dashboard port) or a stop counter its motion loop checks every cycle, as `roplat_world::KinematicArm` does. A device that cannot stop a motion in progress answers `NotSupported` from `Panel::stop` rather than waiting. `conformance::check_panel` checks the stop bound, the latch and the on-site reset.
 
 The [example checklist](../EXAMPLES.md) lists the examples a driver should provide, and feature `conformance` checks a driver's contract implementations in its own tests.
 

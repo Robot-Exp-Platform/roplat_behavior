@@ -12,7 +12,7 @@ Part of the [roplat_behavior workspace](../README.md). 0.9 is not on crates.io y
 - Joint and Cartesian impedance (`impedance`).
 - Gravity compensation and computed torque (`dynamics`).
 - The target sources tracking controllers take (`target`).
-- Operator teleoperation (`teleop`): `cartesian_teleop_control` with a deadzone, a dead-man button, an input timeout and an acceleration limit.
+- Operator teleoperation (`teleop`): `cartesian_teleop_control` with a deadzone, a dead-man button, an input timeout and an acceleration limit, and its joint-space counterpart `joint_jog_control` (`JogMapping`, `JogInput`), which keeps each joint within its acceleration limit and brakes before its position limits so that it stops `limit_margin` short of them.
 - Cartesian servoing (`servo`): `CartesianServo` turns a tip twist into joint velocity or position commands. It slows only when approaching a singularity, stops at joint limits, stays within joint velocity limits, and takes an optional proximity factor.
 - Following a timed tool-pose trajectory on the Cartesian pose channel (`cartesian_follow`): `CartesianTrajectoryFollower`, `cartesian_line`, `cartesian_arc`, and `cartesian_line_within` / `cartesian_arc_within` timed by `CartesianLimits`.
 - Real-time thread priority (`set_realtime_priority`, `is_hardware_realtime`).

@@ -41,6 +41,14 @@ impl FrameBuffer {
         self.clock
     }
 
+    /// Replaces the pose of the fixed edge placing `child`, as
+    /// [`FrameTree::set_fixed`] does on the buffer's tree: lookups from
+    /// then on use it at every stamp, and the joint and dynamic histories
+    /// are kept.
+    pub fn set_fixed(&mut self, child: FrameId, pose: &Pose) -> Result<(), FrameError> {
+        self.tree.set_fixed(child, pose)
+    }
+
     /// Records the positions of `group` at `stamp`. A stamp equal to the
     /// latest one replaces that sample.
     pub fn set_joints<const N: usize>(

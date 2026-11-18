@@ -25,6 +25,10 @@
 //!   surfaces that touch at a crease.
 //! - [`search`]: the nearest, the `k` nearest and the points within a radius
 //!   of any query point, exact, by a k-d tree ([`KdTree`]).
+//! - [`object`]: what perception reports about one object
+//!   ([`ObjectObservation`]: class, score, stamp and frame, and where known
+//!   its pose, size, pixel box, mask, colour and track), the one type that
+//!   detectors, segmenters, marker readers and fusion steps hand on.
 //!
 //! ```
 //! use roplat_perception::{TabletopOptions, segment_tabletop};
@@ -58,6 +62,7 @@ pub mod cloud;
 pub mod fit;
 mod grid;
 pub mod normals;
+pub mod object;
 pub mod registration;
 pub mod search;
 pub mod segment;
@@ -66,6 +71,7 @@ pub mod tabletop;
 pub use cloud::{crop_box, remove_sparse, remove_statistical_outliers, voxel_downsample};
 pub use fit::{FittedShape, fit_box, fit_box_on, fit_cylinder_on, fit_on, fit_sphere};
 pub use normals::{RegionOptions, SurfaceNormal, estimate_normals, smooth_regions};
+pub use object::{ObjectMask, ObjectObservation, PixelBox};
 pub use registration::{IcpOptions, Registration, icp, icp_point_to_plane};
 pub use search::{KdTree, Neighbour};
 pub use segment::{Plane, PlaneFit, PlaneOptions, euclidean_clusters, fit_plane};

@@ -19,6 +19,9 @@
 //! reaches the widths it is sent, an arm's declared joint envelope is
 //! coherent, and a real-time control session stops calling back once it is
 //! told to.
+//! A panel stops a motion from another thread within the bound it declares,
+//! keeps a latched stop until it is cleared, and does not clear a stop that
+//! needs a reset at the device.
 //! Device-specific behavior (ranges, noise, timing) stays in the driver's
 //! own tests.
 
@@ -31,6 +34,14 @@ use crate::ControlExit;
 use crate::{
     Camera, ControlSpace, ControlWith, ForceTorqueSensor, GnssFix, GnssReceiver, GnssStatus,
     Gripper, ImuSensor, Joints, Lidar, MotionCapture, Multirotor, RobotException,
+};
+
+// The panel check (0.10).
+use std::time::Instant;
+
+use crate::{
+    Actor, HasPanel, JointSpace, MoveTo, Outcome, Panel, PanelOp, Release, RobotResult,
+    robot::panel::{clear_no_effect, had_no_effect},
 };
 
 /// A broken contract promise.
@@ -960,4 +971,485 @@ where
 
     let pattern = classify(&durations);
     Ok(SessionReport { durations, pattern, break_error })
+}
+
+// The panel (0.10): stops from another thread while the control handle moves.
+
+/// What [`check_panel`] asks of the device.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PanelCheck<const N: usize> {
+    /// A joint target, reachable from where the device starts, that the
+    /// motion is still on its way to when the stop is sent.
+    pub target: [f64; N],
+    /// How long the motion runs before the check stops it.
+    pub stop_after: Duration,
+    /// How long the joints are watched once a stopped motion has returned.
+    pub watch: Duration,
+    /// How far (rad) a joint may move while it is watched, and how close to
+    /// `target` counts as having reached it.
+    pub still: f64,
+}
+
+/// What [`check_panel`] observed beyond its checks.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PanelReport {
+    /// The panel's [`stop_bound`](Panel::stop_bound).
+    pub bound: Duration,
+    /// From the `stop` call to the motion's return.
+    pub stop_latency: Duration,
+    /// Whether `emergency_stop` latched. When it answered `NoEmergencyStop`,
+    /// the latch checks were skipped.
+    pub latched: bool,
+    /// Whether the device's own emergency stop was exercised; `false` when
+    /// the caller's `press` said it could not engage it.
+    pub on_site: bool,
+    /// What `enable` answered when the check last made the device ready:
+    /// [`Done`](Outcome::Done), [`NoEffect`](Outcome::NoEffect) (it answered
+    /// `Ok` but did nothing, as the default does) or
+    /// [`NotSupported`](Outcome::NotSupported).
+    pub enable: Outcome,
+}
+
+/// Uses a device's [`Panel`] from another thread while its control handle
+/// moves, as a service does. The device must start
+/// [ready](crate::PanelStatus::ready).
+///
+/// 1. **Stop**: `move_to(target)` runs on the calling thread; after
+///    `stop_after` the panel's `stop` is called from another. The motion must
+///    return [`Stopped`](RobotException::Stopped) within the panel's
+///    [`stop_bound`](Panel::stop_bound) of that call, short of `target`; the
+///    joints must then stay within `still` for `watch`; nothing may hold the
+///    device, and the next motion must run.
+/// 2. **Emergency stop**: when `emergency_stop` latches (answers `Ok`), the
+///    status must show the software emergency stop; until `clear`, `enable`
+///    must not take effect (it fails, or answers `Ok` marked as having no
+///    effect, as the default does) and a motion must fail without moving the
+///    joints. After `clear`, `enable` (or `NotSupported`, for a device without
+///    one) must leave it ready; the report says what `enable` answered. `NoEmergencyStop` skips this part; the report says so.
+/// 3. **On-site stop**: `press(true)` engages the device's own emergency stop
+///    (a simulator's button, or a person at the device) and returns whether
+///    it could. The status must then show it as [`Release::OnSite`], `clear`
+///    must answer [`LocalResetRequired`](RobotException::LocalResetRequired),
+///    never `Ok`, and `enable` must not take effect. `press(false)` releases and resets
+///    it at the device, after which `clear` and `enable` must leave the
+///    device ready.
+///
+/// `joints` reads the joint positions through the control handle. The check
+/// calls the panel as [`Actor::App`]`("check_panel")`. On hardware, give a
+/// target whose path is clear: the motion really runs.
+pub fn check_panel<R, const N: usize>(
+    robot: &mut R,
+    check: &PanelCheck<N>,
+    mut joints: impl FnMut(&mut R) -> RobotResult<[f64; N]>,
+    mut press: impl FnMut(bool) -> bool,
+) -> Result<PanelReport, Violation>
+where
+    R: HasPanel + MoveTo<JointSpace<N>>,
+{
+    let panel = robot.panel();
+    let by = Actor::App("check_panel".into());
+    let bound = panel.stop_bound();
+    let status = panel.status().map_err(|e| device("panel: start", e))?;
+    if !status.ready() {
+        return Err(violation(
+            "panel: start",
+            format!("the device must start ready, but its status is {status:?}"),
+        ));
+    }
+
+    // 1. Stop a motion in progress from another thread. The thread is the
+    // check's own: a service's caller is on another thread too.
+    let (moved, returned, sent, stopped) = std::thread::scope(|scope| {
+        let stopper = scope.spawn(|| {
+            std::thread::sleep(check.stop_after);
+            let sent = Instant::now();
+            (sent, panel.stop(&by))
+        });
+        let moved = <R as MoveTo<JointSpace<N>>>::move_to(robot, check.target);
+        let returned = Instant::now();
+        let stopper = stopper.join();
+        stopper.map(|(sent, stopped)| (moved, returned, sent, stopped))
+    })
+    .map_err(|_| violation("panel: stop", "the panel's stop panicked"))?;
+    stopped.map_err(|e| device("panel: stop", e))?;
+    if returned < sent {
+        return Err(violation(
+            "panel: stop",
+            format!(
+                "the motion returned {moved:?} before the stop was sent; give a farther \
+                 target or a shorter stop_after"
+            ),
+        ));
+    }
+    if !matches!(moved, Err(RobotException::Stopped)) {
+        return Err(violation(
+            "panel: stopped",
+            format!("a stopped move_to returned {moved:?}, not Stopped"),
+        ));
+    }
+    let stop_latency = returned - sent;
+    if stop_latency > bound {
+        return Err(violation(
+            "panel: stop bound",
+            format!(
+                "the motion returned {stop_latency:?} after the stop, beyond the declared \
+                 {bound:?}"
+            ),
+        ));
+    }
+    let at_stop = joints(robot).map_err(|e| device("panel: at rest", e))?;
+    if distance(&at_stop, &check.target) <= check.still {
+        return Err(violation(
+            "panel: stop",
+            "the joints are at the target: the stop did not end the motion",
+        ));
+    }
+    std::thread::sleep(check.watch);
+    let later = joints(robot).map_err(|e| device("panel: at rest", e))?;
+    let drift = distance(&at_stop, &later);
+    if drift > check.still {
+        return Err(violation(
+            "panel: at rest",
+            format!(
+                "a joint moved {drift} rad within {:?} after the stopped motion returned",
+                check.watch
+            ),
+        ));
+    }
+    let status = panel
+        .status()
+        .map_err(|e| device("panel: stop latched", e))?;
+    if !status.ready() {
+        return Err(violation(
+            "panel: stop latched",
+            format!("stop must not latch, but after it the status is {status:?}"),
+        ));
+    }
+    <R as MoveTo<JointSpace<N>>>::move_to(robot, later)
+        .map_err(|e| device("panel: after stop", e))?;
+
+    // 2. An emergency stop holds the device until it is cleared.
+    let mut enabled;
+    let latched = match panel.emergency_stop(&by) {
+        Ok(()) => true,
+        Err(RobotException::NoEmergencyStop) => false,
+        Err(e) => return Err(device("panel: emergency stop", e)),
+    };
+    if latched {
+        let status = panel
+            .status()
+            .map_err(|e| device("panel: software estop", e))?;
+        if !status.software_estop {
+            return Err(violation(
+                "panel: software estop",
+                format!("emergency_stop latched, but the status is {status:?}"),
+            ));
+        }
+        if matches!(enable(&*panel, &by), Ok(true)) {
+            return Err(violation(
+                "panel: enable while held",
+                "enable answered Ok while the emergency stop was latched",
+            ));
+        }
+        let before = joints(robot).map_err(|e| device("panel: motion while held", e))?;
+        let moved = <R as MoveTo<JointSpace<N>>>::move_to(robot, check.target);
+        let after = joints(robot).map_err(|e| device("panel: motion while held", e))?;
+        let drift = distance(&before, &after);
+        if moved.is_ok() || drift > check.still {
+            return Err(violation(
+                "panel: motion while held",
+                format!(
+                    "move_to answered {moved:?} and the joints moved {drift} rad while the \
+                     emergency stop was latched"
+                ),
+            ));
+        }
+        let cleared = panel.clear(&by).map_err(|e| device("panel: clear", e))?;
+        if cleared.software_estop {
+            return Err(violation(
+                "panel: clear",
+                format!("clear answered {cleared:?}: the emergency stop is still latched"),
+            ));
+        }
+        enabled = ready_again(&*panel, &by, "panel: after clear")?;
+        <R as MoveTo<JointSpace<N>>>::move_to(robot, after)
+            .map_err(|e| device("panel: after clear", e))?;
+    } else {
+        enabled = ready_again(&*panel, &by, "panel: after emergency stop")?;
+    }
+
+    // 3. The device's own emergency stop needs a reset at the device.
+    let on_site = press(true);
+    if on_site {
+        let status = panel
+            .status()
+            .map_err(|e| device("panel: device estop", e))?;
+        if status.device_estop != Some(Release::OnSite) {
+            return Err(violation(
+                "panel: device estop",
+                format!("the device's own emergency stop is engaged, but the status is {status:?}"),
+            ));
+        }
+        let cleared = panel.clear(&by);
+        if !matches!(cleared, Err(RobotException::LocalResetRequired)) {
+            return Err(violation(
+                "panel: local reset",
+                format!(
+                    "clear answered {cleared:?} while the device's own emergency stop was \
+                     engaged, not LocalResetRequired"
+                ),
+            ));
+        }
+        if matches!(enable(&*panel, &by), Ok(true)) {
+            return Err(violation(
+                "panel: enable while held",
+                "enable answered Ok while the device's own emergency stop was engaged",
+            ));
+        }
+        press(false);
+        let cleared = panel
+            .clear(&by)
+            .map_err(|e| device("panel: after reset", e))?;
+        if cleared.held() {
+            return Err(violation(
+                "panel: after reset",
+                format!("clear after the on-site reset answered {cleared:?}"),
+            ));
+        }
+        enabled = ready_again(&*panel, &by, "panel: after reset")?;
+    }
+
+    Ok(PanelReport { bound, stop_latency, latched, on_site, enable: enabled })
+}
+
+/// The largest difference between two joint vectors.
+fn distance<const N: usize>(a: &[f64; N], b: &[f64; N]) -> f64 {
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0, f64::max)
+}
+
+/// Calls `enable`: `Ok(false)` when it answered `Ok` but marked the call as
+/// having no effect ([`note_no_effect`](crate::note_no_effect)).
+fn enable(panel: &dyn Panel, by: &Actor) -> RobotResult<bool> {
+    clear_no_effect();
+    panel.enable(by)?;
+    Ok(!had_no_effect(PanelOp::Enable))
+}
+
+/// `enable` (or `NotSupported`), after which the status must be ready.
+/// Returns what `enable` answered.
+fn ready_again(panel: &dyn Panel, by: &Actor, check: &'static str) -> Result<Outcome, Violation> {
+    let enabled = match enable(panel, by) {
+        Ok(true) => Outcome::Done,
+        Ok(false) => Outcome::NoEffect,
+        Err(RobotException::NotSupported { .. }) => Outcome::NotSupported,
+        Err(e) => return Err(device(check, e)),
+    };
+    let status = panel.status().map_err(|e| device(check, e))?;
+    if !status.ready() {
+        return Err(violation(
+            check,
+            format!("the device is not ready again: {status:?}"),
+        ));
+    }
+    Ok(enabled)
+}
+
+// Checks for the contracts added in 0.10
+// (segmentation, battery, car-like vehicles).
+
+use crate::{Battery, BatteryStatus, CarLike, LabelImage, SteerCommand};
+
+/// Captures `frames` frames with `advance` between them and reads each
+/// one's segmentation with `labels`, the driver's accessor: every frame
+/// carries one, of the size of the camera's intrinsics, with one id per
+/// pixel; every id in it is [`LabelImage::UNLABELLED`] or listed in its
+/// classes, and its classes list each id once, with a name. The intrinsics
+/// and the header stream are checked as [`check_camera`] checks them.
+///
+/// Whether a pixel's label names what the pixel sees needs a known scene,
+/// so the driver's own simulation tests check it.
+pub fn check_segmentation<C, F>(
+    camera: &mut C,
+    mut advance: impl FnMut(),
+    frames: usize,
+    mut labels: F,
+) -> Result<(), Violation>
+where
+    C: Camera,
+    F: for<'a> FnMut(&'a C::Frame) -> Option<&'a LabelImage>,
+{
+    const CHECK: &str = "segmentation";
+    let info = camera.camera_info();
+    check_intrinsics("camera: intrinsics", &info)?;
+    let pixels = info.width as usize * info.height as usize;
+    let mut headers = Vec::with_capacity(frames);
+    for _ in 0..frames {
+        advance();
+        let frame = camera.capture().map_err(|e| device(CHECK, e))?;
+        let Some(image) = labels(&frame.value) else {
+            return Err(violation(CHECK, "a frame without a segmentation"));
+        };
+        if (image.width, image.height) != (info.width, info.height) {
+            return Err(violation(
+                CHECK,
+                format!(
+                    "a {} x {} segmentation of a {} x {} camera",
+                    image.width, image.height, info.width, info.height
+                ),
+            ));
+        }
+        if image.ids.len() != pixels {
+            return Err(violation(
+                CHECK,
+                format!("{} ids for {pixels} pixels", image.ids.len()),
+            ));
+        }
+        for (k, class) in image.classes.iter().enumerate() {
+            if class.name.is_empty() {
+                return Err(violation(CHECK, format!("id {} has no name", class.id)));
+            }
+            if image.classes[..k].iter().any(|c| c.id == class.id) {
+                return Err(violation(CHECK, format!("id {} is listed twice", class.id)));
+            }
+        }
+        let unknown = image.ids.iter().enumerate().find(|&(_, &id)| {
+            id != LabelImage::UNLABELLED && !image.classes.iter().any(|c| c.id == id)
+        });
+        if let Some((i, id)) = unknown {
+            let (u, v) = pixel(i, info.width);
+            return Err(violation(
+                CHECK,
+                format!("pixel ({u}, {v}) has id {id}, which the classes do not list"),
+            ));
+        }
+        headers.push(frame.header);
+    }
+    check_header_stream(CHECK, &headers)
+}
+
+/// Reads `samples` battery readings with `advance` between them: header
+/// stream, finite and non-negative voltage, charge, capacity and state of
+/// charge, a state of charge within `[0, 1]`, no more charge than capacity,
+/// a finite current and temperature, and a current whose sign agrees with
+/// the status: a pack reported
+/// [`Discharging`](BatteryStatus::Discharging) does not take in more than
+/// `current_tolerance` amperes, and one reported
+/// [`Charging`](BatteryStatus::Charging) does not give out more.
+pub fn check_battery<B: Battery>(
+    battery: &mut B,
+    mut advance: impl FnMut(),
+    samples: usize,
+    current_tolerance: f64,
+) -> Result<(), Violation> {
+    const CHECK: &str = "battery";
+    let mut headers = Vec::with_capacity(samples);
+    for _ in 0..samples {
+        advance();
+        let reading = battery.read_battery().map_err(|e| device(CHECK, e))?;
+        let b = reading.value;
+        for (name, value) in [
+            ("voltage", b.voltage),
+            ("charge", b.charge),
+            ("capacity", b.capacity),
+            ("state of charge", b.state_of_charge),
+        ] {
+            if let Some(v) = value
+                && !(v.is_finite() && v >= 0.0)
+            {
+                return Err(violation(
+                    CHECK,
+                    format!("{name} {v} is not a finite amount"),
+                ));
+            }
+        }
+        for (name, value) in [("current", b.current), ("temperature", b.temperature)] {
+            if let Some(v) = value
+                && !v.is_finite()
+            {
+                return Err(violation(CHECK, format!("{name} {v} is not finite")));
+            }
+        }
+        if let Some(soc) = b.state_of_charge
+            && soc > 1.0
+        {
+            return Err(violation(
+                CHECK,
+                format!("state of charge {soc} is above 1: a share, not percent"),
+            ));
+        }
+        if let (Some(charge), Some(capacity)) = (b.charge, b.capacity)
+            && charge > capacity * (1.0 + 1e-6)
+        {
+            return Err(violation(
+                CHECK,
+                format!("{charge} Ah left in a pack of {capacity} Ah"),
+            ));
+        }
+        if let (Some(current), Some(status)) = (b.current, b.status) {
+            let wrong = match status {
+                BatteryStatus::Discharging => current < -current_tolerance,
+                BatteryStatus::Charging => current > current_tolerance,
+                BatteryStatus::Full | BatteryStatus::Idle => false,
+            };
+            if wrong {
+                return Err(violation(
+                    CHECK,
+                    format!(
+                        "{status:?} with {current} A out of the pack: the current is \
+                         positive while it discharges"
+                    ),
+                ));
+            }
+        }
+        headers.push(reading.header);
+    }
+    check_header_stream(CHECK, &headers)
+}
+
+/// What every [`CarLike`] vehicle keeps without moving: a geometry with a
+/// positive finite wheelbase, a largest steering angle in `(0, π/2)` and,
+/// when known, a positive steering rate; and `drive` refusing a command
+/// that is not finite with
+/// [`InvalidInstruction`](RobotException::InvalidInstruction). The vehicle
+/// receives no command it would carry out. Whether it turns left for a
+/// positive angle, and along the arc the geometry predicts, needs its pose,
+/// so the driver's own simulation tests check that.
+pub fn check_car_like<V: CarLike>(car: &mut V) -> Result<(), Violation> {
+    const CHECK: &str = "car_like";
+    let g = car.geometry();
+    if !(g.wheelbase.is_finite() && g.wheelbase > 0.0) {
+        return Err(violation(CHECK, format!("wheelbase {} m", g.wheelbase)));
+    }
+    if !(g.max_steering_angle > 0.0 && g.max_steering_angle < std::f64::consts::FRAC_PI_2) {
+        return Err(violation(
+            CHECK,
+            format!(
+                "largest steering angle {} rad is not within (0, pi/2)",
+                g.max_steering_angle
+            ),
+        ));
+    }
+    if let Some(rate) = g.max_steering_rate
+        && !(rate.is_finite() && rate > 0.0)
+    {
+        return Err(violation(CHECK, format!("steering rate {rate} rad/s")));
+    }
+    for command in [
+        SteerCommand { speed: f64::NAN, steering_angle: 0.0 },
+        SteerCommand { speed: 0.0, steering_angle: f64::INFINITY },
+    ] {
+        match car.drive(command) {
+            Err(RobotException::InvalidInstruction(_)) => {}
+            other => {
+                return Err(violation(
+                    CHECK,
+                    format!("drive({command:?}) returned {other:?}, not InvalidInstruction"),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
