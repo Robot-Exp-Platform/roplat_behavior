@@ -187,8 +187,7 @@ pub trait Panel: Send + Sync + 'static {
     /// [`Outcome::NoEffect`](crate::Outcome::NoEffect). A caller that uses the
     /// panel directly, not through `LoggedPanel`, gets a silent `Ok(())`; the
     /// notice is the `Outcome::NoEffect` that `LoggedPanel` records, which the
-    /// services report. A driver whose device
-    /// can be disabled overrides it.
+    /// services report. A driver whose device can be disabled overrides it.
     fn disable(&self, by: &Actor) -> RobotResult<()> {
         let _ = by;
         note_no_effect(PanelOp::Disable);
@@ -216,8 +215,7 @@ pub trait Panel: Send + Sync + 'static {
     /// [`Outcome::NoEffect`](crate::Outcome::NoEffect). A caller that uses the
     /// panel directly, not through `LoggedPanel`, gets a silent `Ok(())`; the
     /// notice is the `Outcome::NoEffect` that `LoggedPanel` records, which the
-    /// services report. A driver whose device
-    /// can be enabled overrides it.
+    /// services report. A driver whose device can be enabled overrides it.
     fn enable(&self, by: &Actor) -> RobotResult<()> {
         let _ = by;
         note_no_effect(PanelOp::Enable);
