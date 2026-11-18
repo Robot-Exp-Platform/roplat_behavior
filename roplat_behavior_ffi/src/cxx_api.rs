@@ -73,6 +73,10 @@ macro_rules! cxx_robot_api {
             <$ty as $crate::__private::roplat_behavior::Robot>::enable(self)
         }
 
+        #[allow(
+            deprecated,
+            reason = "binds the deprecated `Robot` method for one more version"
+        )]
         fn disable(&mut self) -> $crate::__private::roplat_behavior::RobotResult<()> {
             <$ty as $crate::__private::roplat_behavior::Robot>::disable(self)
         }
@@ -215,6 +219,10 @@ macro_rules! cxx_arm_bridge {
                 <$inner as $crate::__private::roplat_behavior::Robot>::enable(&mut self.0)
             }
 
+            #[allow(
+                deprecated,
+                reason = "binds the deprecated `Robot` method for one more version"
+            )]
             fn disable(&mut self) -> $crate::__private::roplat_behavior::RobotResult<()> {
                 <$inner as $crate::__private::roplat_behavior::Robot>::disable(&mut self.0)
             }

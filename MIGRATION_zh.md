@@ -79,7 +79,7 @@ to_py = ["dep:pyo3", "dep:roplat_behavior_ffi", "roplat_behavior_ffi/py"]
 | `robot.enable()`、`robot.disable()`、`robot.pause()`、`robot.resume()` | `panel.enable(&by)` 等；缺省答 `NotSupported`，不是 `Ok` |
 | 无 | `panel.status() -> PanelStatus`：`enabled`、`paused`、`software_estop`、`device_estop`、`protective_stop`（后两个取 `Release::Clear` 或 `Release::OnSite`） |
 
-`Robot` 的 `stop`、`emergency_stop`、`enable`、`clear_emergency_stop` 在 0.10 里照常可用，标为弃用，下一个小版本删除。覆写它们的驱动编译时没有警告；调用它们的代码会有弃用警告，`-D warnings` 下即为错误。
+`Robot` 的 `stop`、`emergency_stop`、`clear_emergency_stop`、`enable`、`disable`、`pause`、`resume` 在 0.10 里照常可用，标为弃用，下一个小版本删除。覆写它们的驱动编译时没有警告；调用它们的代码会有弃用警告，`-D warnings` 下即为错误。`init`、`shutdown`、`reset`、`is_moving`、`waiting_for_finish` 仍留在 `Robot` 上。
 
 **驱动**在一个与驱动共享状态的小值上实现 `Panel`，在驱动上实现 `HasPanel`：
 

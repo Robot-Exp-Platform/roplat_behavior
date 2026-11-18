@@ -79,7 +79,7 @@ A device's stops, enabling and status move from `Robot` to a second handle, the 
 | `robot.enable()`, `robot.disable()`, `robot.pause()`, `robot.resume()` | `panel.enable(&by)` and so on; they default to `NotSupported`, not `Ok` |
 | none | `panel.status() -> PanelStatus`: `enabled`, `paused`, `software_estop`, `device_estop`, `protective_stop` (the last two with `Release::Clear` or `Release::OnSite`) |
 
-`Robot::stop`, `emergency_stop`, `enable` and `clear_emergency_stop` still work in 0.10 and are deprecated; they go in the next minor version. A driver that overrides them compiles without warnings; code that calls them gets a deprecation warning, which `-D warnings` turns into an error.
+`Robot::stop`, `emergency_stop`, `clear_emergency_stop`, `enable`, `disable`, `pause` and `resume` still work in 0.10 and are deprecated; they go in the next minor version. A driver that overrides them compiles without warnings; code that calls them gets a deprecation warning, which `-D warnings` turns into an error. `init`, `shutdown`, `reset`, `is_moving` and `waiting_for_finish` stay on `Robot`.
 
 **A driver** implements `Panel` on a small value sharing state with the driver, and `HasPanel` on the driver:
 

@@ -79,10 +79,10 @@ use crate::{RobotException, RobotResult};
 /// [`emergency_stop`](Robot::emergency_stop), whose default stops and then
 /// reports that it could not latch the stop.
 ///
-/// Stopping, emergency-stopping, enabling and clearing a device are its
-/// [`Panel`]'s, which [`HasPanel::panel`] issues and which works while this
-/// value is inside a motion. The four methods here are deprecated since 0.10
-/// and go in the next minor version.
+/// Stopping, emergency-stopping, pausing, resuming, enabling, disabling and
+/// clearing a device are its [`Panel`]'s, which [`HasPanel::panel`] issues and
+/// which works while this value is inside a motion. The seven methods here
+/// that do these are deprecated since 0.10 and go in the next minor version.
 pub trait Robot {
     /// One frame of measured robot state.
     type State;
@@ -130,6 +130,10 @@ pub trait Robot {
     /// Disengages the actuators. It may cut their power, with the brakes
     /// engaged where the device has them; [`enable`](Robot::enable) restores
     /// it.
+    #[deprecated(
+        since = "0.10.0",
+        note = "use `Panel::disable` on the device's panel (`HasPanel::panel`), which ends a motion in progress; its default answers `NotSupported`, not `Ok`"
+    )]
     fn disable(&mut self) -> RobotResult<()> {
         Ok(())
     }
@@ -159,11 +163,19 @@ pub trait Robot {
     }
 
     /// Pause the current action.
+    #[deprecated(
+        since = "0.10.0",
+        note = "use `Panel::pause` on the device's panel (`HasPanel::panel`), which works while a motion runs; its default answers `NotSupported`, not `Ok`"
+    )]
     fn pause(&mut self) -> RobotResult<()> {
         Ok(())
     }
 
     /// Resume a paused action.
+    #[deprecated(
+        since = "0.10.0",
+        note = "use `Panel::resume` on the device's panel (`HasPanel::panel`); its default answers `NotSupported`, not `Ok`"
+    )]
     fn resume(&mut self) -> RobotResult<()> {
         Ok(())
     }
