@@ -54,7 +54,7 @@ pub mod behavior {
     // The panel: stops, enabling and status apart from motion (0.10).
     pub use crate::robot::{
         Actor, HasPanel, LoggedPanel, Outcome, Panel, PanelEvent, PanelOp, PanelStatus, Release,
-        note_no_effect,
+        note_no_effect, take_no_effect,
     };
 
     // The other contracts added in 0.10.
