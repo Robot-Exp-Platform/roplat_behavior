@@ -67,7 +67,7 @@ pub use state::{
 };
 pub use types::Pose;
 
-pub use panel::{Actor, HasPanel, Panel, PanelStatus, Release, note_no_effect};
+pub use panel::{Actor, HasPanel, Panel, PanelStatus, Release, note_no_effect, take_no_effect};
 pub use panel_log::{
     EventBatch, LoggedPanel, Outcome, PANEL_LOG_CAPACITY, PanelEvent, PanelOp, PanelSubscription,
 };

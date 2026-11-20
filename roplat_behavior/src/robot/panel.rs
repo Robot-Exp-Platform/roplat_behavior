@@ -20,7 +20,8 @@ thread_local! {
 /// always engaged, say) calls it too, from the thread that runs the panel
 /// method, so that a [`LoggedPanel`](crate::LoggedPanel) records
 /// [`Outcome::NoEffect`](crate::Outcome::NoEffect) instead of `Done` and the
-/// service can tell its caller nothing happened. It is a mark for this one
+/// service can tell its caller nothing happened, and [`take_no_effect`] gives
+/// it to a direct caller. It is a mark for this one
 /// call; it changes nothing else.
 pub fn note_no_effect(op: PanelOp) {
     NO_EFFECT.with(|noted| noted.set(Some(op)));
@@ -36,6 +37,31 @@ pub(crate) fn clear_no_effect() {
 /// too.
 pub(crate) fn had_no_effect(op: PanelOp) -> bool {
     NO_EFFECT.with(|noted| noted.get() == Some(op))
+}
+
+/// Takes this thread's no-effect mark: the panel operation that answered
+/// `Ok` but said it did nothing on the device ([`note_no_effect`]), or `None`.
+///
+/// It is how a caller that uses a panel directly, not through
+/// [`LoggedPanel`](crate::LoggedPanel), learns that the default `enable` or
+/// `disable` did nothing (the author's ruling of 2026-11-20). The mark
+/// belongs to the thread, not to one panel, and only a call that did nothing
+/// sets it, so take it once before the call to drop a mark an earlier call
+/// left, and again after:
+///
+/// ```
+/// # use roplat_behavior::{Actor, Panel, PanelOp, take_no_effect};
+/// # fn engage(panel: &dyn Panel, by: &Actor) -> roplat_behavior::RobotResult<()> {
+/// take_no_effect();
+/// panel.enable(by)?;
+/// if take_no_effect() == Some(PanelOp::Enable) {
+///     // `Ok`, but the device was not enabled: this driver cannot do it.
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub fn take_no_effect() -> Option<PanelOp> {
+    NO_EFFECT.with(Cell::take)
 }
 
 /// Who asked for a panel operation.
@@ -150,7 +176,8 @@ impl PanelStatus {
 /// (engineering-style ruling 27); the author kept this for now on 2026-11-18,
 /// on condition that the call says it had no effect. So the defaults call
 /// [`note_no_effect`], and a [`LoggedPanel`](crate::LoggedPanel) records
-/// [`Outcome::NoEffect`](crate::Outcome::NoEffect) for them. A driver whose
+/// [`Outcome::NoEffect`](crate::Outcome::NoEffect) for them; a direct caller
+/// asks [`take_no_effect`] (the author chose this on 2026-11-20). A driver whose
 /// device can be enabled or disabled overrides both.
 pub trait Panel: Send + Sync + 'static {
     /// Ends the motion in progress: it returns `Stopped` within
@@ -185,9 +212,10 @@ pub trait Panel: Send + Sync + 'static {
     /// 2026-11-18 (kept for now). The call is marked as having had no effect
     /// ([`note_no_effect`]), so a [`LoggedPanel`](crate::LoggedPanel) records
     /// [`Outcome::NoEffect`](crate::Outcome::NoEffect). A caller that uses the
-    /// panel directly, not through `LoggedPanel`, gets a silent `Ok(())`; the
-    /// notice is the `Outcome::NoEffect` that `LoggedPanel` records, which the
-    /// services report. A driver whose device can be disabled overrides it.
+    /// panel directly, not through `LoggedPanel`, gets `Ok(())` and learns that
+    /// it did nothing from [`take_no_effect`]; a `LoggedPanel` records the
+    /// `Outcome::NoEffect`, which the services report. A driver whose device
+    /// can be disabled overrides it.
     fn disable(&self, by: &Actor) -> RobotResult<()> {
         let _ = by;
         note_no_effect(PanelOp::Disable);
@@ -213,9 +241,10 @@ pub trait Panel: Send + Sync + 'static {
     /// device. The call is marked as having had no effect
     /// ([`note_no_effect`]), so a [`LoggedPanel`](crate::LoggedPanel) records
     /// [`Outcome::NoEffect`](crate::Outcome::NoEffect). A caller that uses the
-    /// panel directly, not through `LoggedPanel`, gets a silent `Ok(())`; the
-    /// notice is the `Outcome::NoEffect` that `LoggedPanel` records, which the
-    /// services report. A driver whose device can be enabled overrides it.
+    /// panel directly, not through `LoggedPanel`, gets `Ok(())` and learns that
+    /// it did nothing from [`take_no_effect`]; a `LoggedPanel` records the
+    /// `Outcome::NoEffect`, which the services report. A driver whose device
+    /// can be enabled overrides it.
     fn enable(&self, by: &Actor) -> RobotResult<()> {
         let _ = by;
         note_no_effect(PanelOp::Enable);

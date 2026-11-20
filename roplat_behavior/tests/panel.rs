@@ -12,7 +12,7 @@ use std::{
 use roplat_behavior::{
     Actor, LoggedPanel, Outcome, Panel, PanelOp, PanelStatus, Release, RobotException, RobotResult,
     msgs::{ManualClock, clock},
-    note_no_effect,
+    note_no_effect, take_no_effect,
 };
 
 /// A panel whose status the test sets directly, as the device would.
@@ -182,6 +182,27 @@ fn a_mark_left_from_before_does_not_reach_the_next_call() {
     note_no_effect(PanelOp::Enable);
     log.enable(&agent()).unwrap();
     assert_eq!(outcomes(&log), [(PanelOp::Enable, Outcome::Done)]);
+}
+
+#[test]
+fn a_direct_caller_takes_the_no_effect_mark() {
+    let panel = Fake::new();
+    // A mark an earlier call left, dropped before the call.
+    note_no_effect(PanelOp::Enable);
+    take_no_effect();
+    // `Fake` overrides `enable`, which has an effect.
+    panel.enable(&agent()).unwrap();
+    assert_eq!(take_no_effect(), None);
+    // The default `disable` answers `Ok` and says it did nothing; taking
+    // the mark clears it.
+    panel.disable(&agent()).unwrap();
+    assert_eq!(take_no_effect(), Some(PanelOp::Disable));
+    assert_eq!(take_no_effect(), None);
+    // Through a log the mark stays for the caller as well.
+    let log = LoggedPanel::new(Fake::new());
+    log.disable(&agent()).unwrap();
+    assert_eq!(take_no_effect(), Some(PanelOp::Disable));
+    assert_eq!(outcomes(&log), [(PanelOp::Disable, Outcome::NoEffect)]);
 }
 
 /// Waits inside `enable` until the test lets it go; the enable has an effect.
