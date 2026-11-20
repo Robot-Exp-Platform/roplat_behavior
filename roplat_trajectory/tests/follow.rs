@@ -12,7 +12,7 @@ use std::{
 
 use roplat_behavior::{
     JointSample, JointState, Joints, Robot, RobotResult, StateView,
-    msgs::{Clock, JointTrajectoryPoint, ManualClock, Stamp},
+    msgs::{Clock, JointTrajectoryPoint, ManualClock, Stamp, time::Checked},
 };
 use roplat_trajectory::{
     JointTrajectoryFollower, TrackingError, plan_waypoints_traj_via_copp, points_from_samples,
@@ -210,7 +210,7 @@ impl Clock for Rewindable {
     fn now(&self) -> Stamp {
         Stamp::new(9, self.0.load(Ordering::SeqCst))
     }
-    fn sleep_until(&self, _: Stamp) {
+    fn block_until(&self, _: Stamp, _: Checked) {
         unreachable!("the follower never waits")
     }
 }
