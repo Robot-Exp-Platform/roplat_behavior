@@ -1000,6 +1000,11 @@ pub struct PanelReport {
     /// Whether `emergency_stop` latched. When it answered `NoEmergencyStop`,
     /// the latch checks were skipped.
     pub latched: bool,
+    /// What `emergency_stop` answered: [`Done`](Outcome::Done) (`Ok`),
+    /// [`EmergencyStopLatchedOnly`](Outcome::EmergencyStopLatchedOnly) with
+    /// what the device does (latched, so checked as for `Ok`), or
+    /// [`NoEmergencyStop`](Outcome::NoEmergencyStop).
+    pub estop: Outcome,
     /// Whether the device's own emergency stop was exercised; `false` when
     /// the caller's `press` said it could not engage it.
     pub on_site: bool,
@@ -1020,12 +1025,15 @@ pub struct PanelReport {
 ///    [`stop_bound`](Panel::stop_bound) of that call, short of `target`; the
 ///    joints must then stay within `still` for `watch`; nothing may hold the
 ///    device, and the next motion must run.
-/// 2. **Emergency stop**: when `emergency_stop` latches (answers `Ok`), the
-///    status must show the software emergency stop; until `clear`, `enable`
-///    must not take effect (it fails, or answers `Ok` marked as having no
-///    effect, as the default does) and a motion must fail without moving the
-///    joints. After `clear`, `enable` (or `NotSupported`, for a device without
-///    one) must leave it ready; the report says what `enable` answered. `NoEmergencyStop` skips this part; the report says so.
+/// 2. **Emergency stop**: when `emergency_stop` latches (answers `Ok`, or
+///    [`EmergencyStopLatchedOnly`](RobotException::EmergencyStopLatchedOnly)),
+///    the status must show the software emergency stop; until `clear`,
+///    `enable` must not take effect (it fails, or answers `Ok` marked as
+///    having no effect, as the default does) and a motion must fail without
+///    moving the joints. After `clear`, `enable` (or `NotSupported`, for a
+///    device without one) must leave it ready; the report says what `enable`
+///    answered. `NoEmergencyStop` skips this part; the report says what
+///    `emergency_stop` answered.
 /// 3. **On-site stop**: `press(true)` engages the device's own emergency stop
 ///    (a simulator's button, or a person at the device) and returns whether
 ///    it could. The status must then show it as [`Release::OnSite`], `clear`
@@ -1130,9 +1138,10 @@ where
 
     // 2. An emergency stop holds the device until it is cleared.
     let mut enabled;
-    let latched = match panel.emergency_stop(&by) {
-        Ok(()) => true,
-        Err(RobotException::NoEmergencyStop) => false,
+    let (latched, estop) = match panel.emergency_stop(&by) {
+        Ok(()) => (true, Outcome::Done),
+        Err(e @ RobotException::EmergencyStopLatchedOnly(_)) => (true, Outcome::from(&e)),
+        Err(RobotException::NoEmergencyStop) => (false, Outcome::NoEmergencyStop),
         Err(e) => return Err(device("panel: emergency stop", e)),
     };
     if latched {
@@ -1219,7 +1228,14 @@ where
         enabled = ready_again(&*panel, &by, "panel: after reset")?;
     }
 
-    Ok(PanelReport { bound, stop_latency, latched, on_site, enable: enabled })
+    Ok(PanelReport {
+        bound,
+        stop_latency,
+        latched,
+        estop,
+        on_site,
+        enable: enabled,
+    })
 }
 
 /// The largest difference between two joint vectors.

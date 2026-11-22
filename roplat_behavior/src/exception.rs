@@ -1,4 +1,4 @@
-use std::{any::type_name, io};
+use std::{any::type_name, borrow::Cow, io};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -81,6 +81,16 @@ pub enum RobotException {
     /// [`Robot::emergency_stop`](crate::Robot::emergency_stop).
     #[error("the robot stopped but cannot latch an emergency stop")]
     NoEmergencyStop,
+
+    /// The emergency stop is latched, as for `Ok`: motion calls and `enable`
+    /// fail until [`Panel::clear`](crate::Panel::clear). But the device did
+    /// not come to the stop `Ok` promises: it keeps power so that it or its
+    /// load does not fall (a drone hovers, a motor holds its position), or
+    /// nothing the vendor publishes says it stays still after the stop it was
+    /// sent. The text says what the device does; see
+    /// [`Panel::emergency_stop`](crate::Panel::emergency_stop).
+    #[error("emergency stop latched, but the device is not at a full stop: {0}")]
+    EmergencyStopLatchedOnly(Cow<'static, str>),
 
     /// A stop ended the motion before it reached its target, or a stop that
     /// holds the device refused the call; see [`Panel`](crate::Panel). The

@@ -44,6 +44,11 @@ pub enum Outcome {
     NoEffect,
     NotSupported,
     NoEmergencyStop,
+    /// The emergency stop is latched, but the device is not at a full stop:
+    /// [`RobotException::EmergencyStopLatchedOnly`], with what it does.
+    EmergencyStopLatchedOnly {
+        reason: String,
+    },
     Stopped,
     LocalResetRequired,
     /// Another error, e.g. a lost connection.
@@ -57,6 +62,9 @@ impl From<&RobotException> for Outcome {
         match error {
             RobotException::NotSupported { .. } => Self::NotSupported,
             RobotException::NoEmergencyStop => Self::NoEmergencyStop,
+            RobotException::EmergencyStopLatchedOnly(reason) => {
+                Self::EmergencyStopLatchedOnly { reason: reason.to_string() }
+            }
             RobotException::Stopped => Self::Stopped,
             RobotException::LocalResetRequired => Self::LocalResetRequired,
             other => Self::Failed { error: other.to_string() },

@@ -191,9 +191,22 @@ pub trait Panel: Send + Sync + 'static {
     /// until [`clear`](Panel::clear). [`PanelStatus::software_estop`] shows the
     /// latch.
     ///
-    /// Returns `Ok` only when the stop is latched. A device that cannot latch
-    /// one stops as strongly as it can and returns
-    /// [`NoEmergencyStop`](RobotException::NoEmergencyStop); it never does less
+    /// Returns `Ok` only when the stop is latched and the device is known to
+    /// stay still after it (its brakes hold it, or it holds its position in
+    /// closed loop) without being kept powered just so that it does not fall.
+    ///
+    /// A device that would fall if its power were cut (a drone, a legged or
+    /// balancing robot, a motor carrying a load without a brake) latches the
+    /// stop but keeps power, hovering or holding its position, and returns
+    /// [`EmergencyStopLatchedOnly`](RobotException::EmergencyStopLatchedOnly)
+    /// saying so; cutting power is then a command of the driver's own (the
+    /// author's choice 戊 on `eco-estop-fall`, 2026-11-23). A device whose
+    /// vendor publishes nothing on whether it stays still after the stop it
+    /// was sent, or whose stop takes away its outputs, latches the stop and
+    /// returns the same answer with what it does.
+    ///
+    /// A device that cannot latch one stops as strongly as it can and returns
+    /// [`NoEmergencyStop`](RobotException::NoEmergencyStop). It never does less
     /// without saying so.
     fn emergency_stop(&self, by: &Actor) -> RobotResult<()>;
 

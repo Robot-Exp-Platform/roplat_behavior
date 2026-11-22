@@ -52,6 +52,7 @@ fn the_kinematic_arm_passes_check_panel() {
     let hardware = arm.hardware();
     let report = check_panel(&mut arm, &CHECK, joints, press(&hardware)).unwrap();
     assert!(report.latched, "{report:?}");
+    assert_eq!(report.estop, Outcome::Done, "{report:?}");
     assert!(report.on_site, "{report:?}");
     assert!(report.stop_latency <= report.bound, "{report:?}");
     assert_eq!(
@@ -135,6 +136,94 @@ fn a_panel_with_the_default_enable_passes_and_the_report_says_so() {
     let violation =
         check_panel(&mut arm, &CHECK, |a| Ok(a.0.joints()), press(&hardware)).unwrap_err();
     assert_eq!(violation.check, "panel: after reset", "{violation}");
+}
+
+/// What the arm says when its emergency stop latches but leaves it powered.
+const HOLDING: &str = "latched; the joints hold their positions under power";
+
+/// The arm's panel with an emergency stop that latches but answers
+/// `EmergencyStopLatchedOnly`, as a device that would fall without power does.
+struct LatchedOnly(Arc<dyn Panel>);
+
+impl Panel for LatchedOnly {
+    fn stop(&self, by: &Actor) -> RobotResult<()> {
+        self.0.stop(by)
+    }
+    fn emergency_stop(&self, by: &Actor) -> RobotResult<()> {
+        self.0.emergency_stop(by)?;
+        Err(RobotException::EmergencyStopLatchedOnly(HOLDING.into()))
+    }
+    fn clear(&self, by: &Actor) -> RobotResult<PanelStatus> {
+        self.0.clear(by)
+    }
+    fn enable(&self, by: &Actor) -> RobotResult<()> {
+        self.0.enable(by)
+    }
+    fn disable(&self, by: &Actor) -> RobotResult<()> {
+        self.0.disable(by)
+    }
+    fn status(&self) -> RobotResult<PanelStatus> {
+        self.0.status()
+    }
+    fn stop_bound(&self) -> Duration {
+        self.0.stop_bound()
+    }
+}
+
+struct WithLatchedOnly(Arm);
+
+impl Robot for WithLatchedOnly {
+    type State = JointState<3>;
+    const CONTROL_PERIOD: Duration = Arm::CONTROL_PERIOD;
+    fn version() -> String {
+        Arm::version()
+    }
+    fn read_state(&mut self) -> RobotResult<JointState<3>> {
+        self.0.read_state()
+    }
+}
+
+impl MoveTo<JointSpace<3>> for WithLatchedOnly {
+    fn move_to(&mut self, target: [f64; 3]) -> RobotResult<()> {
+        MoveTo::<JointSpace<3>>::move_to(&mut self.0, target)
+    }
+}
+
+impl HasPanel for WithLatchedOnly {
+    fn panel(&self) -> Arc<dyn Panel> {
+        Arc::new(LatchedOnly(self.0.panel()))
+    }
+}
+
+#[test]
+fn an_emergency_stop_latched_only_is_checked_as_latched_and_reported() {
+    let mut arm = WithLatchedOnly(Arm::new([0.0; 3]));
+    let hardware = arm.0.hardware();
+    let report = check_panel(&mut arm, &CHECK, |a| Ok(a.0.joints()), press(&hardware)).unwrap();
+    assert!(report.latched, "{report:?}");
+    assert_eq!(
+        report.estop,
+        Outcome::EmergencyStopLatchedOnly { reason: HOLDING.into() },
+        "{report:?}"
+    );
+
+    // A logged panel keeps the answer with its reason.
+    let logged = LoggedPanel::new(Arc::new(LatchedOnly(Arm::new([0.0; 3]).panel())));
+    let by = Actor::App("test".into());
+    assert!(matches!(
+        logged.emergency_stop(&by),
+        Err(RobotException::EmergencyStopLatchedOnly(reason)) if reason == HOLDING
+    ));
+    let event = logged
+        .recent(1)
+        .pop()
+        .expect("the emergency stop is recorded");
+    assert_eq!(event.op, PanelOp::EmergencyStop);
+    assert_eq!(
+        event.outcome,
+        Outcome::EmergencyStopLatchedOnly { reason: HOLDING.into() }
+    );
+    assert!(event.after.is_some_and(|status| status.software_estop));
 }
 
 /// Moves `arm` on another thread and returns the handle; the arm comes back
@@ -329,6 +418,8 @@ enum Defect {
     ButtonUnreported,
     /// A stopped motion reports success.
     StoppedIsOk,
+    /// The emergency stop only stops, but answers `EmergencyStopLatchedOnly`.
+    LatchedOnlyUnlatched,
 }
 
 struct Faulty {
@@ -350,7 +441,13 @@ impl Panel for FaultyPanel {
         }
     }
     fn emergency_stop(&self, by: &Actor) -> RobotResult<()> {
-        self.inner.emergency_stop(by)
+        match self.defect {
+            Defect::LatchedOnlyUnlatched => {
+                self.inner.stop(by)?;
+                Err(RobotException::EmergencyStopLatchedOnly(HOLDING.into()))
+            }
+            _ => self.inner.emergency_stop(by),
+        }
     }
     fn clear(&self, by: &Actor) -> RobotResult<PanelStatus> {
         match (self.defect, self.inner.clear(by)) {
@@ -435,6 +532,7 @@ fn check_panel_names_each_broken_promise() {
         (Defect::ClearIgnoresButton, "panel: local reset"),
         (Defect::ButtonUnreported, "panel: device estop"),
         (Defect::StoppedIsOk, "panel: stopped"),
+        (Defect::LatchedOnlyUnlatched, "panel: software estop"),
     ] {
         let violation = check_faulty(defect);
         assert_eq!(violation.check, check, "{defect:?}: {violation}");
