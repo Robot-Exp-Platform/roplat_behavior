@@ -74,7 +74,7 @@ to_py = ["dep:pyo3", "dep:roplat_behavior_ffi", "roplat_behavior_ffi/py"]
 | 0.9（`Robot` 上，`&mut self`） | 0.10（`Panel` 上，`&self`） |
 |---|---|
 | `robot.stop()` | `panel.stop(&by)`：进行中的运动在 `panel.stop_bound()` 内返回 `Err(Stopped)`；不锁存 |
-| `robot.emergency_stop()` | `panel.emergency_stop(&by)`：只有锁存了才答 `Ok`，否则答 `NoEmergencyStop`，与原来相同 |
+| `robot.emergency_stop()` | `panel.emergency_stop(&by)`：锁存了、而且知道设备停下之后保持住（不是为了不掉下才保持出力），才答 `Ok`；锁存不了答 `NoEmergencyStop`，与原来相同。新加（作者 2026-11-23 选的戊）：急停锁存了，但设备为了不让自己或负载掉下而保持出力（无人机悬停、没有抱闸的电机按位置保持），或厂商公开的资料没有说停下之后保持住，答 `EmergencyStopLatchedOnly(设备做了什么)`；断力由驱动另给命令。`LoggedPanel` 记 `Outcome::EmergencyStopLatchedOnly { reason }`；`check_panel` 照 `Ok` 检查锁存，答复写在 `PanelReport::estop`。这个枚举没有 `#[non_exhaustive]`：对 `RobotException` 的 `match` 没有通配分支的，要加上新变体 |
 | `robot.clear_emergency_stop()` | `panel.clear(&by) -> PanelStatus`：清除软件可以清除的一切停止，不论是谁引起的；需要现场复位的停止还在时答 `Err(LocalResetRequired)` |
 | `robot.enable()`、`robot.disable()`、`robot.pause()`、`robot.resume()` | `panel.enable(&by)` 等。`pause`、`resume` 缺省答 `NotSupported`，不是 `Ok`。`enable`、`disable` 缺省什么也不做、答 `Ok(())`，与 `Robot` 上的相同（工程风格裁定 27；作者 2026-11-18 定为暂时保留，条件是调用要说明自己没有起作用）：缺省会调 `note_no_effect`，`LoggedPanel` 记 `Outcome::NoEffect`。不经 `LoggedPanel`、直接调用面板的调用方得到 `Ok(())`，可以调 `take_no_effect()` 查到这次调用没有起作用（作者 2026-11-20 定）；`LoggedPanel` 记下 `Outcome::NoEffect`，由服务回报。设备能使能、去使能的驱动覆写这两个；有意什么也不做的驱动自己调 `note_no_effect(PanelOp::Enable)` 或 `(PanelOp::Disable)` |
 | 无 | `panel.status() -> PanelStatus`：`enabled`、`paused`、`software_estop`、`device_estop`、`protective_stop`（后两个取 `Release::Clear` 或 `Release::OnSite`） |
